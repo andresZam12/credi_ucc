@@ -21,8 +21,9 @@ Hubo dos fallos consecutivos, con causas distintas:
 - `python -m pytest`: 77 pruebas aprobadas; cobertura total Python de 94,67 %.
 - `npm run test:coverage`: 10 pruebas aprobadas; cobertura de líneas de `page.tsx` de 100 % y de ramas de 86,04 %.
 - `npm run lint`, `npm run typecheck` y `npm run build`: aprobados.
+- SonarCloud: Quality Gate `OK` en la ejecución #8 (`29d8c6c`).
 
-La ejecución #7 confirmó que Sonar importa ambos reportes, pero falló el Quality Gate por la clasificación del archivo de pruebas. La exclusión recién añadida requiere otra ejecución de GitHub Actions para confirmar el resultado remoto; no se debe considerar resuelto hasta que termine en verde.
+La ejecución #7 confirmó que Sonar importa ambos reportes, pero falló el Quality Gate por la clasificación del archivo de pruebas. La exclusión de los archivos `*.test.tsx` corrigió ese último problema; la ejecución #8 confirmó el resultado remoto en verde.
 
 ## Acción necesaria en SonarCloud
 
@@ -36,4 +37,4 @@ La selección de modo de análisis es un ajuste del proyecto en SonarCloud y no 
 
 ## Por qué tomó más trabajo
 
-El primer error ocurría al final del workflow y parecía relacionado con código, autenticación o configuración. Al resolver el conflicto de Automatic Analysis aparecieron problemas sucesivos: rutas ambiguas en `coverage.xml`, falta de reporte LCOV y, finalmente, la clasificación errónea del archivo de pruebas como código de producción. Cada problema solo se hizo visible al superar el anterior; por eso fue necesario comparar los logs del escáner con las métricas y el árbol de componentes que publica SonarCloud. La validación local ya pasa; el siguiente análisis remoto debe confirmar que la exclusión del archivo de pruebas lleva el Quality Gate a verde.
+El primer error ocurría al final del workflow y parecía relacionado con código, autenticación o configuración. Al resolver el conflicto de Automatic Analysis aparecieron problemas sucesivos: rutas ambiguas en `coverage.xml`, falta de reporte LCOV y, finalmente, la clasificación errónea del archivo de pruebas como código de producción. Cada problema solo se hizo visible al superar el anterior; por eso fue necesario comparar los logs del escáner con las métricas y el árbol de componentes que publica SonarCloud. La ejecución #8 confirmó que las correcciones locales y la exclusión de pruebas dejan el Quality Gate en verde.
