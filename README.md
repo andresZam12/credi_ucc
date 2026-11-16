@@ -86,13 +86,13 @@ API_SECRET_KEY=xxx VERSION_CANDIDATA=2.0.0 python deploy/deploy.py   # exit 0 = 
 
 ## Análisis con SonarCloud
 
-El workflow `.github/workflows/build.yml` ejecuta Ruff, las pruebas Python con cobertura, y lint, type-check y build del frontend en `windows-latest`. Después envía el análisis a SonarCloud en cada push o pull request a `main`.
+El workflow `.github/workflows/sonarcloud.yml` ejecuta Ruff, las pruebas Python con cobertura, y lint, type-check y build del frontend en `windows-latest`. Después envía el análisis a SonarCloud en cada push o pull request a `main`, usando la autenticación OIDC de SonarSource.
 
-En GitHub, agrega el token generado por SonarCloud como secreto del repositorio llamado **`SONAR_TOKEN`** (Settings → Secrets and variables → Actions). No lo guardes en el código ni lo compartas en mensajes. Las claves del proyecto están configuradas en `sonar-project.properties` como `estebanMns` y `estebanMns_crediucc`.
+Las claves del proyecto están configuradas en `sonar-project.properties` como `estebanMns` y `estebanMns_crediucc`.
 
 ## Secretos de GitHub requeridos
 
-`SONAR_TOKEN` se requiere para el análisis estático. `API_SECRET_KEY`, `TELEGRAM_BOT_TOKEN` y `TELEGRAM_CHAT_ID` se usan en despliegues. Si creas el entorno `produccion` con *Required reviewers*, el pipeline pasa de Continuous Deployment a Continuous Delivery.
+`API_SECRET_KEY`, `TELEGRAM_BOT_TOKEN` y `TELEGRAM_CHAT_ID` se usan en despliegues. El análisis SonarCloud usa autenticación OIDC desde GitHub Actions. Si creas el entorno `produccion` con *Required reviewers*, el pipeline pasa de Continuous Deployment a Continuous Delivery.
 
 ## Inyección de fallas (demostración de los Quality Gates)
 
