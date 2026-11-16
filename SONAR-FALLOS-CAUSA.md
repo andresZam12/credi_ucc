@@ -1,29 +1,37 @@
-# Diagnóstico de las ejecuciones de SonarCloud
+# Diagnóstico de los fallos de SonarCloud
 
-## Causa del fallo
+## Causas identificadas
 
-La ejecución más reciente revisada (`233ccde`, workflow #5, 16 de noviembre de 2026) completó correctamente Ruff, las 77 pruebas Python (94,67 % de cobertura), el lint, el type-check y el build de Next.js. También se autenticó correctamente con SonarSource. El único paso fallido fue el escáner de SonarCloud, que terminó con:
+Hubo dos fallos consecutivos, con causas distintas:
 
-> You are running CI analysis while Automatic Analysis is enabled. Please consider disabling one or the other.
+1. En la ejecución #5, SonarCloud rechazó el análisis de CI porque **Automatic Analysis** seguía activo. El workflow se autenticaba correctamente; el conflicto era tener habilitados ambos modos de análisis.
+2. Después de desactivar Automatic Analysis, la ejecución #6 (`fb9d3be`) sí llegó al escáner, pero no pudo importar `coverage.xml`: el reporte usaba varios directorios `<source>` y nombres ambiguos como `__init__.py`. Además, el Quality Gate midió solo 16,53 % de cobertura nueva: el frontend aún no generaba un reporte LCOV y sus líneas nuevas quedaban sin cubrir.
 
-El proyecto tiene activado **Automatic Analysis** en SonarCloud al mismo tiempo que `.github/workflows/sonarcloud.yml` inicia el análisis de CI. SonarCloud rechaza esa combinación. La clave de organización y el token OIDC no son la causa: la autenticación funciona y el escáner llega a crear el análisis antes de detenerse.
+## Correcciones aplicadas
 
-## Correcciones en el repositorio
+- Se conservó el análisis de CI y se eliminaron `sonar.sources` y `sonar.tests`, que el escáner actual no aplicaba.
+- Se configuró Coverage.py para emitir rutas relativas desde una sola raíz. `coverage.xml` ahora incluye nombres como `app/__init__.py`, evitando la ambigüedad entre archivos con el mismo nombre.
+- Se añadieron pruebas de interacción para la página de solicitudes y cobertura V8/LCOV para el frontend. El workflow genera `frontend/coverage/lcov.info` antes del análisis y SonarCloud ya tiene configurada esa ruta.
+- Se excluyeron del cálculo de cobertura los artefactos generados y archivos de configuración estática, no el código de la página.
 
-- Se quitaron `sonar.sources` y `sonar.tests` de `sonar-project.properties`: los logs del escáner confirman que la configuración actual de alcance de SonarCloud no les da efecto.
-- Se documentó en el README el requisito de usar un único modo de análisis.
+## Validación local
+
+- `python -m pytest`: 77 pruebas aprobadas; cobertura total Python de 94,67 %.
+- `npm run test:coverage`: 10 pruebas aprobadas; cobertura de líneas de `page.tsx` de 100 % y de ramas de 86,04 %.
+- `npm run lint`, `npm run typecheck` y `npm run build`: aprobados.
+
+Estas verificaciones confirman las pruebas y el formato de los reportes localmente. El Quality Gate de SonarCloud todavía requiere una nueva ejecución en GitHub Actions; no se debe considerar resuelto hasta que esa ejecución termine en verde.
 
 ## Acción necesaria en SonarCloud
 
-Para conservar el escaneo de CI y el Quality Gate en GitHub Actions:
+Para usar el análisis de CI:
 
-1. Abre el proyecto `estebanMns_crediucc` en SonarCloud.
-2. Ve a **Administration → Analysis Method**.
-3. Desactiva **Automatic Analysis** y conserva el análisis de CI.
-4. En GitHub Actions, vuelve a ejecutar el workflow **SonarQube** fallido.
+1. En `estebanMns_crediucc`, abre **Administration → Analysis Method**.
+2. Desactiva **Automatic Analysis** y conserva el análisis de CI.
+3. Ejecuta el workflow **SonarQube** desde **Actions → Run workflow**, o espera la ejecución del próximo push.
 
-Esta opción es un ajuste del proyecto en SonarCloud; no se puede cambiar mediante un commit del repositorio. El workflow también admite ejecución manual desde **Actions → SonarQube → Run workflow** para validar el cambio sin hacer otro commit.
+La selección de modo de análisis es un ajuste del proyecto en SonarCloud y no se cambia con un commit.
 
 ## Por qué tomó más trabajo
 
-El error ocurre al final del workflow, después de que todas las pruebas y validaciones hayan pasado. Eso hacía parecer que el problema podía estar en el código, la cobertura, las claves del proyecto o la autenticación. Los intentos anteriores corrigieron problemas distintos (como la clave de organización), pero no podían resolver el conflicto entre dos modos de análisis configurados en SonarCloud. La ejecución #5 todavía registró el conflicto a las 19:12 UTC; por eso no verifica que el ajuste posterior de Automatic Analysis haya surtido efecto. La causa solo quedó clara al revisar el log del paso **SonarQube Scan** en varias ejecuciones y comparar su error final.
+El primer error ocurría al final del workflow y parecía relacionado con código, autenticación o configuración. Al resolver el conflicto de Automatic Analysis apareció el siguiente problema, esta vez en la importación de cobertura Python; después, el Quality Gate mostró que también faltaba cobertura automatizada para el frontend. Cada problema se hacía visible solo al superar el anterior. Por eso fue necesario revisar por separado el mensaje final del escáner, la estructura de `coverage.xml`, las métricas de código nuevo y finalmente generar y enlazar reportes de cobertura para ambos lenguajes. La validación local ya pasa, pero solo el próximo análisis remoto puede confirmar el Quality Gate completo.

@@ -4,6 +4,11 @@ version = "1.0.0"
 description = "Proyecto integrador de Pruebas y Mantenimiento de Software"
 requires-python = ">=3.11"
 
+[tool.coverage.run]
+source = ["."]
+relative_files = true
+omit = ["tests/*", "frontend/*", "bridge/*", ".venv/*", "venv/*"]
+
 # Semana 7: el linter es la primera inspección estática del pipeline.
 [tool.ruff]
 line-length = 110
