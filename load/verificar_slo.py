@@ -2,6 +2,7 @@
 
 Uso: python load/verificar_slo.py reporte_carga_stats.csv [p95_max_ms] [fallos_max_pct]
 Termina con exit code 1 si se viola el SLO, para que el pipeline de CD se detenga.
+El CSV debe estar dentro del directorio de trabajo (se rechaza cualquier ruta fuera de él).
 """
 from __future__ import annotations
 
@@ -66,12 +67,23 @@ class AcuerdoNivelServicio:
         return "\n".join(lineas)
 
 
-def main(argumentos: list[str]) -> int:
+def resolver_ruta_segura(ruta: str, directorio_base: Path) -> Path | None:
+    """Evita Path Traversal: solo acepta archivos dentro de ``directorio_base``."""
+    base = directorio_base.resolve()
+    candidata = (base / ruta).resolve()
+    return candidata if candidata.is_relative_to(base) else None
+
+
+def main(argumentos: list[str], directorio_base: Path | None = None) -> int:
     if not argumentos:
         print(__doc__)
         return 2
+    ruta = resolver_ruta_segura(argumentos[0], directorio_base or Path.cwd())
+    if ruta is None:
+        print(f"[ERROR] El reporte debe estar dentro del directorio de trabajo: {argumentos[0]}")
+        return 2
     slo = AcuerdoNivelServicio(*(float(a) for a in argumentos[1:3]))
-    reporte = ReporteCarga.desde_csv(Path(argumentos[0]))
+    reporte = ReporteCarga.desde_csv(ruta)
     print(slo.resumen(reporte))
     if slo.se_cumple(reporte.agregado):
         print("[OK] SLO de rendimiento cumplido")

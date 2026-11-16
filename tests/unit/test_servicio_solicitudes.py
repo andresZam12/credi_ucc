@@ -38,7 +38,8 @@ def test_aprobacion_se_publica_y_queda_notificada():
 
     registro = servicio.radicar(nueva_solicitud())
 
-    assert registro.resultado.es_aprobado and registro.notificado is True
+    assert registro.resultado.es_aprobado
+    assert registro.notificado is True
     assert publicador.publicados == [registro.id]
     assert central.consultas == 1
     assert servicio.obtener(registro.id).notificado is True  # persistió la actualización
@@ -47,13 +48,15 @@ def test_aprobacion_se_publica_y_queda_notificada():
 def test_rechazo_no_se_publica():
     servicio, publicador, _ = crear_servicio()
     registro = servicio.radicar(nueva_solicitud(score=599))
-    assert registro.notificado is False and publicador.publicados == []
+    assert registro.notificado is False
+    assert publicador.publicados == []
 
 
 def test_fallo_de_publicacion_no_impide_radicar():
     servicio, _, _ = crear_servicio(PublicadorEspia(respuesta=False))
     registro = servicio.radicar(nueva_solicitud())
-    assert registro.resultado.es_aprobado and registro.notificado is False
+    assert registro.resultado.es_aprobado
+    assert registro.notificado is False
 
 
 def test_listar_y_obtener():

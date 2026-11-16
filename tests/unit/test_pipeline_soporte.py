@@ -84,7 +84,8 @@ def test_caso_b_fallo_en_staging_activa_rollback(tmp_path, http, motivo):
     ejecucion, registro, notificador, _ = pipeline(tmp_path, http)
     assert ejecucion.ejecutar() == 1
     assert registro.version_estable == "1.0.0"
-    assert "ROLLBACK" in notificador.mensajes[0] and motivo in notificador.mensajes[0]
+    assert "ROLLBACK" in notificador.mensajes[0]
+    assert motivo in notificador.mensajes[0]
 
 
 def test_enmascarar():
@@ -133,7 +134,15 @@ def escribir_csv(tmp_path: Path, p95: int, fallos: int) -> Path:
 
 @pytest.mark.parametrize("p95, fallos, codigo", [(900, 0, 0), (1001, 0, 1), (100, 2, 1)])
 def test_quality_gate_de_rendimiento(tmp_path, p95, fallos, codigo):
-    assert verificar_slo([str(escribir_csv(tmp_path, p95, fallos)), "1000", "1"]) == codigo
+    argumentos = [str(escribir_csv(tmp_path, p95, fallos)), "1000", "1"]
+    assert verificar_slo(argumentos, directorio_base=tmp_path) == codigo
+
+
+def test_slo_rechaza_rutas_fuera_del_directorio_base(tmp_path):
+    base = tmp_path / "reportes"
+    base.mkdir()
+    escribir_csv(tmp_path, 50, 0)
+    assert verificar_slo(["../stats.csv"], directorio_base=base) == 2
 
 
 def test_reporte_y_slo_por_defecto(tmp_path):

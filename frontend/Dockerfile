@@ -1,7 +1,7 @@
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --ignore-scripts
 ENV NEXT_TELEMETRY_DISABLED=1
 COPY . .
 ARG API_URL=http://api:8000

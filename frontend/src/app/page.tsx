@@ -38,16 +38,16 @@ const iconContent: Record<IconName, ReactNode> = {
   file: <><path d="M7 3.8h7l4 4V20a1.2 1.2 0 0 1-1.2 1.2H7A1.2 1.2 0 0 1 5.8 20V5A1.2 1.2 0 0 1 7 3.8Z" /><path d="M14 4v4h4M9 13h6M9 16.5h6" /></>,
   user: <><circle cx="12" cy="8" r="3.4" /><path d="M5.5 20a6.5 6.5 0 0 1 13 0" /></>,
   mail: <><rect x="3.5" y="5.5" width="17" height="13" rx="2" /><path d="m4.5 7 7.5 5.5L19.5 7" /></>,
-  check: <><path d="m5 12.5 4.2 4.2L19 7" /></>,
-  money: <><path d="M12 3.5v17M16.5 7H10a3 3 0 0 0 0 6h4a3 3 0 0 1 0 6H7" /></>,
-  arrow: <><path d="M5 12h14M13 6l6 6-6 6" /></>,
+  check: <path d="m5 12.5 4.2 4.2L19 7" />,
+  money: <path d="M12 3.5v17M16.5 7H10a3 3 0 0 0 0 6h4a3 3 0 0 1 0 6H7" />,
+  arrow: <path d="M5 12h14M13 6l6 6-6 6" />,
   sparkle: <><path d="m12 3 1.8 6.2L20 11l-6.2 1.8L12 19l-1.8-6.2L4 11l6.2-1.8L12 3Z" /><path d="m19 16 .8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16Z" /></>,
   refresh: <><path d="M20 7v5h-5M4 17v-5h5" /><path d="M5.6 9A7 7 0 0 1 18 6.5L20 12M4 12l2 5.5A7 7 0 0 0 18.4 15" /></>,
   lock: <><rect x="5" y="10" width="14" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></>,
   clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
 };
 
-function Icon({ name, className = "" }: { name: IconName; className?: string }) {
+function Icon({ name, className = "" }: Readonly<{ name: IconName; className?: string }>) {
   return (
     <svg
       aria-hidden="true"
@@ -97,6 +97,46 @@ function errorMessage(body: unknown) {
   return "Revisa los datos ingresados e inténtalo de nuevo.";
 }
 
+type Feedback = { message: string; tone: "success" | "error" };
+
+function formText(formData: FormData, field: string): string {
+  const value = formData.get(field);
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function feedbackFor(result: Application): Feedback {
+  if (result.decision === "APROBADO") {
+    const rate = result.tasa_mensual == null ? "" : ` Tasa mensual: ${result.tasa_mensual}%.`;
+    return { message: `¡Listo, ${result.nombre}! Tu solicitud #${result.id} fue aprobada.${rate}`, tone: "success" };
+  }
+  const reason = rejectionReasons[result.motivo] ?? "No cumple los criterios de aprobación.";
+  return { message: `Solicitud #${result.id}: ${reason}`, tone: "error" };
+}
+
+function serviceStatus(serviceOnline: boolean | null): { dot: string; label: string } {
+  if (serviceOnline === null) return { dot: "animate-pulse bg-[#d1b76a]", label: "Conectando..." };
+  if (serviceOnline) return { dot: "bg-[#71b584]", label: "Servicio activo" };
+  return { dot: "bg-[#db796a]", label: "Sin conexión" };
+}
+
+function HistoryStatus({ isLoading, error, isEmpty }: Readonly<{ isLoading: boolean; error: string; isEmpty: boolean }>) {
+  if (isLoading) {
+    return <p className="py-8 text-center text-[10px] text-[#89948d]">Cargando tus solicitudes...</p>;
+  }
+  if (error) {
+    return <output className="block py-7 text-center text-[10px] text-[#a95948]">{error}</output>;
+  }
+  if (!isEmpty) return null;
+  return (
+    <div className="grid justify-items-center px-3 py-7 text-center">
+      <span className="mb-2 grid h-10 w-10 place-items-center rounded-xl bg-[#f0f5ef] text-[#7a9a7b]"><Icon className="h-5 w-5" name="file" /></span>
+      <strong className="font-display text-[11px] text-[#58675d]">Aún no tienes solicitudes</strong>
+      <span className="mt-1 text-[9px] text-[#9ca69e]">Cuando envíes una, podrás consultar aquí su estado.</span>
+      <a className="mt-2 inline-flex items-center gap-1 text-[9px] font-bold text-[#477553]" href="#nueva-solicitud">Crear mi primera solicitud <Icon className="h-3 w-3" name="arrow" /></a>
+    </div>
+  );
+}
+
 async function requestApplications(): Promise<Application[]> {
   const response = await fetch("/api/v1/solicitudes", { cache: "no-store" });
   if (!response.ok) throw new Error("No pudimos cargar tus solicitudes.");
@@ -114,7 +154,7 @@ export default function Home() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [serviceOnline, setServiceOnline] = useState<boolean | null>(null);
   const [historyError, setHistoryError] = useState("");
-  const [feedback, setFeedback] = useState<{ message: string; tone: "success" | "error" } | null>(null);
+  const [feedback, setFeedback] = useState<Feedback | null>(null);
 
   const loadApplications = useCallback(async () => {
     setApplications(await requestApplications());
@@ -156,8 +196,8 @@ export default function Home() {
 
     const formData = new FormData(form);
     const payload = {
-      nombre: String(formData.get("nombre")).trim(),
-      email: String(formData.get("email")).trim(),
+      nombre: formText(formData, "nombre"),
+      email: formText(formData, "email"),
       edad: Number(formData.get("edad")),
       score: Number(formData.get("score")),
       ingresos: Number(formData.get("ingresos")),
@@ -178,19 +218,7 @@ export default function Home() {
       if (!response.ok) throw new Error(errorMessage(body));
       if (!isApplication(body)) throw new Error("La respuesta del servicio no tiene el formato esperado.");
 
-      const result = body;
-      if (result.decision === "APROBADO") {
-        const rate = result.tasa_mensual == null ? "" : ` Tasa mensual: ${result.tasa_mensual}%.`;
-        setFeedback({
-          message: `¡Listo, ${result.nombre}! Tu solicitud #${result.id} fue aprobada.${rate}`,
-          tone: "success",
-        });
-      } else {
-        setFeedback({
-          message: `Solicitud #${result.id}: ${rejectionReasons[result.motivo] ?? "No cumple los criterios de aprobación."}`,
-          tone: "error",
-        });
-      }
+      setFeedback(feedbackFor(body));
 
       form.reset();
       await loadApplications();
@@ -217,6 +245,7 @@ export default function Home() {
 
   const approvedCount = applications.filter((application) => application.decision === "APROBADO").length;
   const requestedAmount = applications.reduce((sum, application) => sum + Number(application.monto), 0);
+  const status = serviceStatus(serviceOnline);
 
   return (
     <div className="min-h-screen md:flex">
@@ -259,7 +288,7 @@ export default function Home() {
           </div>
           <div className="mt-5 flex items-center gap-2 px-1 text-[10px] text-[#a8beb2]">
             <span className="h-2 w-2 rounded-full bg-[#71b584]" />
-            Portal CrediUCC
+            <span>Portal CrediUCC</span>
             <span className="ml-auto text-[#819e90]">v1.0</span>
           </div>
         </div>
@@ -272,8 +301,8 @@ export default function Home() {
           </div>
           <div className="flex items-center gap-3 sm:gap-4">
             <div className="flex items-center gap-2 text-[10px] text-[#738078]" aria-live="polite">
-              <span className={`h-2 w-2 rounded-full ${serviceOnline === false ? "bg-[#db796a]" : serviceOnline ? "bg-[#71b584]" : "animate-pulse bg-[#d1b76a]"}`} />
-              <span className="hidden sm:inline">{serviceOnline === null ? "Conectando..." : serviceOnline ? "Servicio activo" : "Sin conexión"}</span>
+              <span className={`h-2 w-2 rounded-full ${status.dot}`} />
+              <span className="hidden sm:inline">{status.label}</span>
             </div>
             <span className="h-6 w-px bg-[#e9ede8]" />
             <span className="grid h-8 w-8 place-items-center rounded-full border border-[#dfe9df] bg-[#edf4ed] text-[10px] font-bold text-[#426c52]" aria-label="Comunidad UCC">UC</span>
@@ -363,7 +392,7 @@ export default function Home() {
 
               <div className="my-4 flex items-center gap-2 rounded-lg border border-[#e8eee6] bg-[#f7faf6] px-3 py-2.5 text-[9px] leading-relaxed text-[#7a887f]" role="note">
                 <span className="grid h-[18px] w-[18px] shrink-0 place-items-center rounded-full border border-[#a6bda8] font-display text-[10px] font-bold text-[#63866d]">i</span>
-                La evaluación es inmediata. Completa tus datos para consultar el resultado.
+                <span>La evaluación es inmediata. Completa tus datos para consultar el resultado.</span>
               </div>
 
               <form className="grid gap-x-3 gap-y-3.5 sm:grid-cols-2" onSubmit={handleSubmit}>
@@ -411,9 +440,9 @@ export default function Home() {
                 </label>
 
                 <label className="flex min-h-[51px] cursor-pointer items-center rounded-lg border border-[#e5eae4] bg-[#fdfefd] px-2.5 py-2">
-                  <span className="grid gap-1">
-                    <strong className="text-[9px] text-[#506356]">Beneficio estudiante</strong>
-                    <small className="text-[8px] text-[#99a39b]">Cuéntanos si estudias en la UCC</small>
+                  <span className="grid gap-1 text-[9px] font-bold text-[#506356]">
+                    Beneficio estudiante
+                    <small className="text-[8px] font-normal text-[#99a39b]">Cuéntanos si estudias en la UCC</small>
                   </span>
                   <input className="peer sr-only" defaultChecked name="es_estudiante" type="checkbox" />
                   <span aria-hidden="true" className="relative ml-auto h-[18px] w-8 rounded-full bg-[#d4dcd5] transition peer-checked:bg-[#4f8d63] after:absolute after:left-[3px] after:top-[3px] after:h-3 after:w-3 after:rounded-full after:bg-white after:shadow after:transition peer-checked:after:translate-x-3.5 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-[#39775155]" />
@@ -438,14 +467,13 @@ export default function Home() {
                   </button>
                 </div>
                 {feedback && (
-                  <p
+                  <output
                     aria-live="polite"
                     className={`flex items-start gap-2 rounded-lg border px-3 py-2.5 text-[10px] leading-relaxed sm:col-span-2 ${feedback.tone === "success" ? "border-[#d9e8dc] bg-[#f2f8f2] text-[#3e6e4b]" : "border-[#eedbd4] bg-[#fff7f4] text-[#a95948]"}`}
-                    role="status"
                   >
                     <span className="font-extrabold">{feedback.tone === "success" ? "✓" : "!"}</span>
-                    {feedback.message}
-                  </p>
+                    <span>{feedback.message}</span>
+                  </output>
                 )}
               </form>
             </article>
@@ -513,25 +541,15 @@ export default function Home() {
                 </tbody>
               </table>
             </div>
-            {isLoading ? (
-              <p className="py-8 text-center text-[10px] text-[#89948d]">Cargando tus solicitudes...</p>
-            ) : historyError ? (
-              <div className="py-7 text-center text-[10px] text-[#a95948]" role="status">{historyError}</div>
-            ) : applications.length === 0 ? (
-              <div className="grid justify-items-center px-3 py-7 text-center">
-                <span className="mb-2 grid h-10 w-10 place-items-center rounded-xl bg-[#f0f5ef] text-[#7a9a7b]"><Icon className="h-5 w-5" name="file" /></span>
-                <strong className="font-display text-[11px] text-[#58675d]">Aún no tienes solicitudes</strong>
-                <span className="mt-1 text-[9px] text-[#9ca69e]">Cuando envíes una, podrás consultar aquí su estado.</span>
-                <a className="mt-2 inline-flex items-center gap-1 text-[9px] font-bold text-[#477553]" href="#nueva-solicitud">Crear mi primera solicitud <Icon className="h-3 w-3" name="arrow" /></a>
-              </div>
-            ) : null}
+            <HistoryStatus error={historyError} isEmpty={applications.length === 0} isLoading={isLoading} />
             <p className="mt-2 flex items-center gap-2 border-t border-[#eff1ee] pt-3 text-[8px] text-[#a0aaa2]">
               <span className="h-[5px] w-[5px] rounded-full bg-[#71b584]" /> Tus solicitudes se guardan mientras la sesión de la aplicación esté activa.
             </p>
           </section>
 
           <footer className="mt-4 flex items-center gap-1 text-[8px] text-[#a3aca5]">
-            <strong className="text-[#65796c]">CrediUCC</strong> · Una iniciativa para impulsar tus metas
+            <strong className="text-[#65796c]">CrediUCC</strong>
+            <span>· Una iniciativa para impulsar tus metas</span>
             <span className="ml-auto">2026</span>
           </footer>
         </div>

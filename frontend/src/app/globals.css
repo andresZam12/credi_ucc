@@ -16,9 +16,12 @@ button, input {
   font: inherit;
 }
 
+/* Fuera de cualquier @layer: las reglas sin capa ganan a las utilidades de Tailwind
+   (que viven en @layer utilities), por lo que no hace falta !important. */
 @media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
   *, *::before, *::after {
-    scroll-behavior: auto !important;
-    transition-duration: .01ms !important;
+    scroll-behavior: auto;
+    transition-duration: .01ms;
   }
 }

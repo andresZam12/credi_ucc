@@ -8,6 +8,7 @@ import logging
 
 from botocore.exceptions import BotoCoreError, ClientError
 
+from app.aplicacion.puertos import PublicadorEventos
 from app.dominio.modelos import SolicitudRegistrada
 
 logger = logging.getLogger(__name__)
@@ -15,12 +16,12 @@ logger = logging.getLogger(__name__)
 EVENTO_APROBACION = "CREDITO_APROBADO"
 
 
-class PublicadorNulo:
+class PublicadorNulo(PublicadorEventos):
     def publicar_aprobacion(self, registro: SolicitudRegistrada) -> bool:
         return False
 
 
-class PublicadorAWS:
+class PublicadorAWS(PublicadorEventos):
     def __init__(self, cliente_s3, cliente_sqs, bucket: str, cola: str) -> None:
         self._s3 = cliente_s3
         self._sqs = cliente_sqs

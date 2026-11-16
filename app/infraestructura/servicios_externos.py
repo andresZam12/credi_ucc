@@ -3,10 +3,11 @@ import os
 import time
 from collections.abc import Callable
 
+from app.aplicacion.puertos import CentralRiesgo, MonitorSalud
 from app.dominio.modelos import SolicitudCredito
 
 
-class CentralRiesgoSimulada:
+class CentralRiesgoSimulada(CentralRiesgo):
     """Emula la latencia de una central de riesgo (cuello de botella de la Semana 8)."""
 
     def __init__(self, latencia_ms: int = 0, dormir: Callable[[float], None] = time.sleep) -> None:
@@ -18,7 +19,7 @@ class CentralRiesgoSimulada:
             self._dormir(self._latencia_s)
 
 
-class MonitorSaludPorEntorno:
+class MonitorSaludPorEntorno(MonitorSalud):
     """Lee la salud en cada llamada para poder simular fallos en caliente (Semana 9)."""
 
     def __init__(self, variable: str = "APP_HEALTHY") -> None:

@@ -19,6 +19,7 @@ services:
 
   infra-init:                       # IaC: crea bucket y cola (idempotente)
     build: ./infra
+    image: crediucc-infra-init:1.0.0
     container_name: crediucc_infra_init
     environment:
       - AWS_ENDPOINT_URL=http://localstack:4566
@@ -30,6 +31,7 @@ services:
     build:
       context: .
       dockerfile: app/Dockerfile
+    image: crediucc-api:1.0.0
     container_name: crediucc_api
     ports:
       - "8000:8000"
