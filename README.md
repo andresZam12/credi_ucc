@@ -47,15 +47,28 @@ python -m venv venv && source venv/bin/activate      # Windows: .\venv\Scripts\a
 python -m pip install -r requirements-dev.txt
 python -m pytest                                     # unitarias + Quality Gate de cobertura (≥ 80 %)
 python -m ruff check .                               # linter
-python -m uvicorn app.main:app --port 8000 --reload  # API en http://localhost:8000/docs
+python -m uvicorn app.main:app --port 8000 --reload  # terminal 1: API
 ```
+
+En otra terminal, inicia el frontend Next.js:
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
+La interfaz web queda disponible en **http://localhost:3000/** y la documentación de la API en **http://localhost:8000/docs**. Next.js reenvía las peticiones del frontend a la API; por defecto, esta debe estar en `http://localhost:8000` (se puede cambiar con `API_URL`).
 
 ## Entorno completo con Docker Compose (QA y staging)
 
 ```bash
-docker compose --profile qa up --build --exit-code-from test-runner   # LocalStack + IaC + API + test-runner
+docker compose --profile qa up --build --exit-code-from test-runner   # LocalStack + IaC + API + frontend + test-runner
+docker compose up -d --build frontend                                  # frontend + API + LocalStack
 docker compose down -v                                                 # destruir todo
 ```
+
+En Docker Compose, el frontend se publica en **http://localhost:3000/**.
 
 ## Prueba de carga y SLO
 
@@ -71,11 +84,15 @@ python load/verificar_slo.py reporte_carga_stats.csv 1000 1      # p95 ≤ 1000 
 API_SECRET_KEY=xxx VERSION_CANDIDATA=2.0.0 python deploy/deploy.py   # exit 0 = promovido, 1 = rollback
 ```
 
+## Análisis con SonarCloud
+
+El workflow `.github/workflows/build.yml` ejecuta Ruff, las pruebas Python con cobertura, y lint, type-check y build del frontend en `windows-latest`. Después envía el análisis a SonarCloud en cada push o pull request a `main`.
+
+En GitHub, agrega el token generado por SonarCloud como secreto del repositorio llamado **`SONAR_TOKEN`** (Settings → Secrets and variables → Actions). No lo guardes en el código ni lo compartas en mensajes. Las claves del proyecto están configuradas en `sonar-project.properties` como `estebanMns` y `estebanMns_crediucc`.
+
 ## Secretos de GitHub requeridos
 
-`SONAR_TOKEN`, `API_SECRET_KEY`, `TELEGRAM_BOT_TOKEN` y `TELEGRAM_CHAT_ID`. Además, en `sonar-project.properties` cambia
-`sonar.organization` y `sonar.projectKey` por los tuyos. Si creas el entorno `produccion` con *Required reviewers*,
-el pipeline pasa de Continuous Deployment a Continuous Delivery.
+`SONAR_TOKEN` se requiere para el análisis estático. `API_SECRET_KEY`, `TELEGRAM_BOT_TOKEN` y `TELEGRAM_CHAT_ID` se usan en despliegues. Si creas el entorno `produccion` con *Required reviewers*, el pipeline pasa de Continuous Deployment a Continuous Delivery.
 
 ## Inyección de fallas (demostración de los Quality Gates)
 

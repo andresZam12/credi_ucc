@@ -1,6 +1,6 @@
 # Semanas 4, 5 y 10: manifiesto declarativo del entorno completo de QA/Staging.
-#   docker compose up --build --exit-code-from test-runner   -> pipeline local de QA
-#   docker compose up -d --build api                           -> entorno de staging
+#   docker compose --profile qa up --build --exit-code-from test-runner -> pipeline local de QA
+#   docker compose up -d --build frontend                         -> entorno de staging
 #   docker compose down -v                                     -> destrucción limpia
 services:
   localstack:                       # Nube AWS emulada (S3 + SQS)
@@ -50,6 +50,20 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+
+  frontend:                         # Interfaz Next.js
+    build:
+      context: ./frontend
+      args:
+        - API_URL=http://api:8000
+    container_name: crediucc_frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - API_URL=http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
 
   test-runner:                      # Contenedor efímero de pruebas de API
     build: ./tests/api
