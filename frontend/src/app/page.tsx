@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type SubmitEvent, type ReactNode } from "react";
 
 type IconName = "grid" | "plus" | "file" | "user" | "mail" | "check" | "money" | "arrow" | "sparkle" | "refresh" | "lock" | "clock";
 
@@ -189,7 +189,7 @@ export default function Home() {
     };
   }, []);
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
     if (!form.reportValidity()) return;
@@ -440,10 +440,7 @@ export default function Home() {
                 </label>
 
                 <label className="flex min-h-[51px] cursor-pointer items-center rounded-lg border border-[#e5eae4] bg-[#fdfefd] px-2.5 py-2">
-                  <span className="grid gap-1 text-[9px] font-bold text-[#506356]">
-                    Beneficio estudiante
-                    <small className="text-[8px] font-normal text-[#99a39b]">Cuéntanos si estudias en la UCC</small>
-                  </span>
+                  <span className="grid gap-1 text-[9px] font-bold text-[#506356]">Beneficio estudiante<small className="text-[8px] font-normal text-[#99a39b]">Cuéntanos si estudias en la UCC</small></span>
                   <input className="peer sr-only" defaultChecked name="es_estudiante" type="checkbox" />
                   <span aria-hidden="true" className="relative ml-auto h-[18px] w-8 rounded-full bg-[#d4dcd5] transition peer-checked:bg-[#4f8d63] after:absolute after:left-[3px] after:top-[3px] after:h-3 after:w-3 after:rounded-full after:bg-white after:shadow after:transition peer-checked:after:translate-x-3.5 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-[#39775155]" />
                 </label>
