@@ -31,7 +31,7 @@ class ReglaScoreMinimo(ReglaElegibilidad):
         self._minimo = minimo
 
     def motivo_rechazo(self, solicitud: SolicitudCredito) -> Motivo | None:
-        return None if solicitud.score >= self._minimo else Motivo.SCORE_INSUFICIENTE
+        return None if solicitud.score > self._minimo else Motivo.SCORE_INSUFICIENTE
 
 
 class ReglaIngresoMinimo(ReglaElegibilidad):
