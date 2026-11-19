@@ -7,6 +7,10 @@ function withoutTrailingSlashes(url: string): string {
 }
 
 const nextConfig: NextConfig = {
+  // Solo aplica a `npm run dev`. Next bloquea su JavaScript de desarrollo para cualquier origen que no sea
+  // localhost: si la página se abría como http://127.0.0.1:3000 o con la IP de red ("Network" en la consola),
+  // React nunca arrancaba, el estado quedaba en "Conectando…" y el formulario recargaba la página.
+  allowedDevOrigins: ["127.0.0.1", "192.168.*.*", "10.*.*.*", "172.*.*.*"],
   turbopack: {
     root: process.cwd(),
     rules: {

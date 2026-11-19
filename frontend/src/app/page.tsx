@@ -1,8 +1,23 @@
 "use client";
 
-import { useCallback, useEffect, useState, type SubmitEvent, type ReactNode } from "react";
-
-type IconName = "grid" | "plus" | "file" | "user" | "mail" | "check" | "money" | "arrow" | "sparkle" | "refresh" | "lock" | "clock";
+import {
+  useCallback, useEffect, useRef, useState, useSyncExternalStore,
+  type ChangeEvent, type FocusEvent, type ReactNode, type SubmitEvent,
+} from "react";
+import {
+  CAMPOS_VACIOS,
+  LIMITES,
+  ORDEN_CAMPOS,
+  REQUISITOS,
+  TASAS,
+  aSolicitud,
+  agruparMiles,
+  formatearPesos,
+  soloDigitos,
+  validar,
+  type CampoTexto,
+  type Campos,
+} from "../lib/credito";
 
 type Application = {
   id: number;
@@ -14,7 +29,31 @@ type Application = {
   tasa_mensual: number | null;
   notificado: boolean;
   creado_en: string;
+  numero_cliente: number;
+  es_recurrente: boolean;
+  version: number;
+  actualizado_en: string | null;
 };
+
+type EstadoServicio = "conectando" | "activo" | "caido";
+
+const MENSAJE_SIN_SERVICIO =
+  "No hay conexión con el servicio de evaluación. Verifica que la API esté encendida e inténtalo de nuevo.";
+
+/** Máximo de dígitos por campo numérico (evita números absurdos al escribir). */
+const MAX_DIGITOS: Partial<Record<CampoTexto, number>> = { edad: 3, score: 3, ingresos: 10, monto: 8 };
+
+const MOTIVOS_RECHAZO: Record<string, string> = {
+  EDAD_FUERA_DE_RANGO: `Debes tener entre ${REQUISITOS.edadMin} y ${REQUISITOS.edadMax} años.`,
+  SCORE_INSUFICIENTE: `Tu score crediticio debe ser de al menos ${REQUISITOS.scoreMin} puntos.`,
+  INGRESOS_INSUFICIENTES: `Tus ingresos mensuales deben ser de al menos ${formatearPesos(REQUISITOS.ingresosMin)}.`,
+};
+
+const fechaHora = new Intl.DateTimeFormat("es-CO", { dateStyle: "medium", timeStyle: "short" });
+
+function formatearTasa(tasa: number): string {
+  return `${tasa.toLocaleString("es-CO")} % mensual`;
+}
 
 function isApplication(value: unknown): value is Application {
   if (typeof value !== "object" || value === null) return false;
@@ -28,64 +67,40 @@ function isApplication(value: unknown): value is Application {
     typeof record.motivo === "string" &&
     (typeof record.tasa_mensual === "number" || record.tasa_mensual === null) &&
     typeof record.notificado === "boolean" &&
-    typeof record.creado_en === "string"
+    typeof record.creado_en === "string" &&
+    typeof record.numero_cliente === "number" &&
+    typeof record.es_recurrente === "boolean" &&
+    typeof record.version === "number" &&
+    (typeof record.actualizado_en === "string" || record.actualizado_en === null)
   );
 }
 
-const iconContent: Record<IconName, ReactNode> = {
-  grid: <><rect x="3.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="13.5" y="3.5" width="7" height="4" rx="1.5" /><rect x="13.5" y="10.5" width="7" height="10" rx="1.5" /><rect x="3.5" y="13.5" width="7" height="7" rx="1.5" /></>,
-  plus: <><circle cx="12" cy="12" r="9" /><path d="M12 7v10M7 12h10" /></>,
-  file: <><path d="M7 3.8h7l4 4V20a1.2 1.2 0 0 1-1.2 1.2H7A1.2 1.2 0 0 1 5.8 20V5A1.2 1.2 0 0 1 7 3.8Z" /><path d="M14 4v4h4M9 13h6M9 16.5h6" /></>,
-  user: <><circle cx="12" cy="8" r="3.4" /><path d="M5.5 20a6.5 6.5 0 0 1 13 0" /></>,
-  mail: <><rect x="3.5" y="5.5" width="17" height="13" rx="2" /><path d="m4.5 7 7.5 5.5L19.5 7" /></>,
-  check: <path d="m5 12.5 4.2 4.2L19 7" />,
-  money: <path d="M12 3.5v17M16.5 7H10a3 3 0 0 0 0 6h4a3 3 0 0 1 0 6H7" />,
-  arrow: <path d="M5 12h14M13 6l6 6-6 6" />,
-  sparkle: <><path d="m12 3 1.8 6.2L20 11l-6.2 1.8L12 19l-1.8-6.2L4 11l6.2-1.8L12 3Z" /><path d="m19 16 .8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16Z" /></>,
-  refresh: <><path d="M20 7v5h-5M4 17v-5h5" /><path d="M5.6 9A7 7 0 0 1 18 6.5L20 12M4 12l2 5.5A7 7 0 0 0 18.4 15" /></>,
-  lock: <><rect x="5" y="10" width="14" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></>,
-  clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
-};
-
-function Icon({ name, className = "" }: Readonly<{ name: IconName; className?: string }>) {
-  return (
-    <svg
-      aria-hidden="true"
-      className={className}
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="1.7"
-      viewBox="0 0 24 24"
-    >
-      {iconContent[name]}
-    </svg>
-  );
+// ------------------------------------------------------------- clientes recurrentes
+/** El correo identifica al cliente, sin importar mayúsculas ni espacios (igual que en el backend). */
+function claveCliente(email: string): string {
+  return email.trim().toLowerCase();
 }
 
-const currency = new Intl.NumberFormat("es-CO", {
-  style: "currency",
-  currency: "COP",
-  maximumFractionDigits: 0,
-});
+function solicitudesDelCliente(historial: Application[], email: string): Application[] {
+  const clave = claveCliente(email);
+  return historial.filter((s) => claveCliente(s.email) === clave);
+}
 
-const dateTime = new Intl.DateTimeFormat("es-CO", {
-  dateStyle: "medium",
-  timeStyle: "short",
-});
+function etiquetaCliente(s: Application): string {
+  return s.es_recurrente ? `Recurrente · ${s.numero_cliente}.ª solicitud` : "Cliente nuevo";
+}
 
-const rejectionReasons: Record<string, string> = {
-  EDAD_FUERA_DE_RANGO: "La edad debe estar entre 18 y 65 años.",
-  SCORE_INSUFICIENTE: "El score mínimo requerido es 600.",
-  INGRESOS_INSUFICIENTES: "Los ingresos mensuales no alcanzan el mínimo requerido.",
-};
+function detalleSolicitud(s: Application): string {
+  const partes = [etiquetaCliente(s)];
+  if (s.version > 1) partes.push(`versión ${s.version} (actualizada)`);
+  return partes.join(" · ");
+}
 
-function errorMessage(body: unknown) {
+/** Traduce el cuerpo de error de la API (400 de dominio o 422 de FastAPI) a un mensaje legible. */
+function mensajeDeError(body: unknown): string {
   if (typeof body !== "object" || body === null || !("detail" in body)) {
     return "No pudimos procesar la solicitud. Inténtalo de nuevo.";
   }
-
   const detail = body.detail;
   if (typeof detail === "string") return detail;
   if (Array.isArray(detail)) {
@@ -97,460 +112,714 @@ function errorMessage(body: unknown) {
   return "Revisa los datos ingresados e inténtalo de nuevo.";
 }
 
-type Feedback = { message: string; tone: "success" | "error" };
-
-function formText(formData: FormData, field: string): string {
-  const value = formData.get(field);
-  return typeof value === "string" ? value.trim() : "";
+/** Si el servidor responde algo que no es JSON (p. ej. "Internal Server Error"), devuelve null. */
+async function leerJson(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
 }
 
-function feedbackFor(result: Application): Feedback {
-  if (result.decision === "APROBADO") {
-    const rate = result.tasa_mensual == null ? "" : ` Tasa mensual: ${result.tasa_mensual}%.`;
-    return { message: `¡Listo, ${result.nombre}! Tu solicitud #${result.id} fue aprobada.${rate}`, tone: "success" };
-  }
-  const reason = rejectionReasons[result.motivo] ?? "No cumple los criterios de aprobación.";
-  return { message: `Solicitud #${result.id}: ${reason}`, tone: "error" };
+async function pedirHistorial(): Promise<Application[]> {
+  const response = await fetch("/api/v1/solicitudes", { cache: "no-store" });
+  if (!response.ok) throw new Error("historial no disponible");
+  const data: unknown = await response.json();
+  if (!Array.isArray(data) || !data.every(isApplication)) throw new Error("formato inesperado");
+  return data;
 }
 
-function serviceStatus(serviceOnline: boolean | null): { dot: string; label: string } {
-  if (serviceOnline === null) return { dot: "animate-pulse bg-[#d1b76a]", label: "Conectando..." };
-  if (serviceOnline) return { dot: "bg-[#71b584]", label: "Servicio activo" };
-  return { dot: "bg-[#db796a]", label: "Sin conexión" };
+const sinSuscripcion = () => () => {};
+
+/**
+ * false en el HTML que envía el servidor y true cuando el JavaScript ya tomó control de la página.
+ * Sin JavaScript, un formulario HTML se envía "a la antigua": recarga la página y borra lo escrito.
+ * Mientras esto sea false, el botón queda deshabilitado y dice "Cargando…".
+ */
+function useInteractivo(): boolean {
+  return useSyncExternalStore(sinSuscripcion, () => true, () => false);
 }
 
-function HistoryStatus({ isLoading, error, isEmpty }: Readonly<{ isLoading: boolean; error: string; isEmpty: boolean }>) {
-  if (isLoading) {
-    return <p className="py-8 text-center text-[10px] text-[#89948d]">Cargando tus solicitudes...</p>;
-  }
-  if (error) {
-    return <output className="block py-7 text-center text-[10px] text-[#a95948]">{error}</output>;
-  }
-  if (!isEmpty) return null;
+function textoBotonEvaluar(interactivo: boolean, enviando: boolean): string {
+  if (!interactivo) return "Cargando…";
+  return enviando ? "Evaluando…" : "Evaluar solicitud";
+}
+
+// ------------------------------------------------------------------------------- iconos y logo
+type NombreIcono = "usuario" | "resultado" | "lista" | "dinero" | "check" | "cruz" | "rayo" | "escudo" | "historial" | "estudiante";
+
+const TRAZOS: Record<NombreIcono, ReactNode> = {
+  usuario: <><circle cx="12" cy="8" r="3.6" /><path d="M5 20a7 7 0 0 1 14 0" /></>,
+  resultado: <><path d="M4 19V9M10 19V5M16 19v-7M22 19H2" /></>,
+  lista: <><path d="M9 6h11M9 12h11M9 18h11" /><path d="m3.5 6 1.2 1.2L7 5M3.5 12l1.2 1.2L7 11M3.5 18l1.2 1.2L7 17" /></>,
+  dinero: <><rect x="2.5" y="6" width="19" height="12" rx="2" /><circle cx="12" cy="12" r="2.8" /><path d="M6 9.5v5M18 9.5v5" /></>,
+  check: <path d="m5 12.5 4.2 4.2L19 7" />,
+  cruz: <path d="M6 6l12 12M18 6 6 18" />,
+  rayo: <path d="M13 2 4.5 13.5H11L10 22l8.5-11.5H12L13 2Z" />,
+  escudo: <><path d="M12 3 4.5 6v5.5c0 4.6 3.1 8.2 7.5 9.5 4.4-1.3 7.5-4.9 7.5-9.5V6L12 3Z" /><path d="m9 12 2.2 2.2L15.5 10" /></>,
+  historial: <><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" /><path d="M3.5 4v4.5H8M12 8v4.5l3 2" /></>,
+  estudiante: <><path d="m2.5 9 9.5-4.5L21.5 9 12 13.5 2.5 9Z" /><path d="M6.5 11v4.5c1.5 1.4 3.4 2 5.5 2s4-.6 5.5-2V11M21.5 9v5" /></>,
+};
+
+function Icono({ nombre, className = "h-5 w-5" }: Readonly<{ nombre: NombreIcono; className?: string }>) {
   return (
-    <div className="grid justify-items-center px-3 py-7 text-center">
-      <span className="mb-2 grid h-10 w-10 place-items-center rounded-xl bg-[#f0f5ef] text-[#7a9a7b]"><Icon className="h-5 w-5" name="file" /></span>
-      <strong className="font-display text-[11px] text-[#58675d]">Aún no tienes solicitudes</strong>
-      <span className="mt-1 text-[9px] text-[#9ca69e]">Cuando envíes una, podrás consultar aquí su estado.</span>
-      <a className="mt-2 inline-flex items-center gap-1 text-[9px] font-bold text-[#477553]" href="#nueva-solicitud">Crear mi primera solicitud <Icon className="h-3 w-3" name="arrow" /></a>
+    <svg aria-hidden="true" className={className} fill="none" stroke="currentColor" strokeLinecap="round"
+      strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24">
+      {TRAZOS[nombre]}
+    </svg>
+  );
+}
+
+/** Logo CrediUCC: un brote que crece desde una moneda (el crédito como impulso para crecer). */
+function Logo({ className = "h-11 w-11" }: Readonly<{ className?: string }>) {
+  return (
+    <svg aria-hidden="true" className={className} viewBox="0 0 48 48">
+      <rect fill="#faf4e8" height="48" rx="12" width="48" />
+      <circle cx="24" cy="34" fill="#c9a35a" r="8" />
+      <circle cx="24" cy="34" fill="none" r="5.2" stroke="#f3dfae" strokeWidth="1.4" />
+      <path d="M24 30V16" stroke="#2f6b3f" strokeLinecap="round" strokeWidth="2.6" />
+      <path d="M24 21c0-5.2 3.8-8.4 9.4-8.4 0 5.2-3.8 8.4-9.4 8.4Z" fill="#2f6b3f" />
+      <path d="M24 25.5c0-4.4-3.2-7.2-8-7.2 0 4.4 3.2 7.2 8 7.2Z" fill="#5f9a62" />
+    </svg>
+  );
+}
+
+// ------------------------------------------------------------------ componentes de presentación
+function IndicadorServicio({ estado }: Readonly<{ estado: EstadoServicio }>) {
+  const estilos: Record<EstadoServicio, { punto: string; texto: string }> = {
+    conectando: { punto: "bg-oro animate-pulse", texto: "Conectando…" },
+    activo: { punto: "bg-[#7fd18f]", texto: "Servicio disponible" },
+    caido: { punto: "bg-[#ff8a75]", texto: "Servicio no disponible" },
+  };
+  const { punto, texto } = estilos[estado];
+  return (
+    <span aria-live="polite" className="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/10 px-3.5 py-1.5 text-sm font-semibold text-white">
+      <span aria-hidden="true" className={`h-2.5 w-2.5 rounded-full ${punto}`} />
+      {texto}
+    </span>
+  );
+}
+
+function Tarjeta({ titulo, icono, children, className = "" }: Readonly<{
+  titulo: string; icono: NombreIcono; children: ReactNode; className?: string;
+}>) {
+  return (
+    <section aria-label={titulo} className={`rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6 ${className}`}>
+      <div className="flex items-center gap-3">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-cafe-soft text-cafe">
+          <Icono nombre={icono} />
+        </span>
+        <h2 className="text-lg font-bold text-cafe">{titulo}</h2>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+type PropsCampo = Readonly<{
+  campo: CampoTexto;
+  etiqueta: string;
+  ayuda?: string;
+  error?: string;
+  valor: string;
+  prefijo?: string;
+  sufijo?: string;
+  numerico?: boolean;
+  tipo?: "text" | "email";
+  autoComplete?: string;
+  placeholder?: string;
+  className?: string;
+  onChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  onBlur: (event: FocusEvent<HTMLInputElement>) => void;
+}>;
+
+function CampoFormulario({
+  campo, etiqueta, ayuda, error, valor, prefijo, sufijo, numerico = false, tipo = "text",
+  autoComplete, placeholder, className = "", onChange, onBlur,
+}: PropsCampo) {
+  const idMensaje = `${campo}-mensaje`;
+  const borde = error
+    ? "border-danger bg-danger-soft/40 ring-2 ring-danger/15"
+    : "border-line bg-cream focus-within:border-brand focus-within:bg-surface focus-within:ring-4 focus-within:ring-brand/15";
+  return (
+    <div className={`grid gap-1.5 ${className}`}>
+      <label className="text-sm font-semibold text-ink" htmlFor={campo}>{etiqueta}</label>
+      <div className={`flex h-12 items-center gap-2 rounded-xl border px-3.5 transition ${borde}`}>
+        {prefijo && <span aria-hidden="true" className="text-base font-bold text-cafe">{prefijo}</span>}
+        <input
+          aria-describedby={error || ayuda ? idMensaje : undefined}
+          aria-invalid={error ? true : undefined}
+          autoComplete={autoComplete}
+          className="h-full w-full min-w-0 bg-transparent text-base text-ink outline-none placeholder:text-muted/60"
+          id={campo}
+          inputMode={numerico ? "numeric" : undefined}
+          name={campo}
+          onBlur={onBlur}
+          onChange={onChange}
+          placeholder={placeholder}
+          type={tipo}
+          value={valor}
+        />
+        {sufijo && <span aria-hidden="true" className="shrink-0 rounded-md bg-cafe-soft px-2 py-0.5 text-xs font-semibold text-cafe">{sufijo}</span>}
+      </div>
+      {error && <p className="text-sm font-medium text-danger" id={idMensaje}>{error}</p>}
+      {!error && ayuda && <p className="text-sm text-muted" id={idMensaje}>{ayuda}</p>}
     </div>
   );
 }
 
-async function requestApplications(): Promise<Application[]> {
-  const response = await fetch("/api/v1/solicitudes", { cache: "no-store" });
-  if (!response.ok) throw new Error("No pudimos cargar tus solicitudes.");
-  const data: unknown = await response.json();
-  if (!Array.isArray(data)) throw new Error("La respuesta del servicio no tiene el formato esperado.");
-  const records = data.filter(isApplication);
-  if (records.length !== data.length) throw new Error("La respuesta del servicio no tiene el formato esperado.");
-  return records;
+function Fila({ etiqueta, valor }: Readonly<{ etiqueta: string; valor: string }>) {
+  return (
+    <div className="flex items-baseline justify-between gap-4 border-t border-line/80 py-2.5 first:border-t-0">
+      <dt className="text-sm text-muted">{etiqueta}</dt>
+      <dd className="m-0 text-right text-base font-semibold text-ink">{valor}</dd>
+    </div>
+  );
 }
 
-export default function Home() {
-  const [applications, setApplications] = useState<Application[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [serviceOnline, setServiceOnline] = useState<boolean | null>(null);
-  const [historyError, setHistoryError] = useState("");
-  const [feedback, setFeedback] = useState<Feedback | null>(null);
+function PanelResultado({ resultado }: Readonly<{ resultado: Application | null }>) {
+  if (!resultado) {
+    return (
+      <div className="mt-4 flex items-center gap-4 rounded-xl border border-dashed border-line bg-cream p-4">
+        <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-brand-soft text-brand">
+          <Icono className="h-6 w-6" nombre="rayo" />
+        </span>
+        <p className="text-base text-muted">
+          Completa el formulario y pulsa <strong className="text-ink">Evaluar solicitud</strong>. El resultado aparecerá aquí.
+        </p>
+      </div>
+    );
+  }
+  if (resultado.decision === "APROBADO") {
+    return (
+      <div className="mt-4 overflow-hidden rounded-xl border border-ok/25 bg-ok-soft">
+        <div className="flex items-center gap-3 bg-linear-to-r from-brand to-brand-dark px-4 py-3 text-white">
+          <span className="grid h-9 w-9 place-items-center rounded-full bg-cream text-brand"><Icono nombre="check" /></span>
+          <p className="text-xl font-bold">✓ Crédito aprobado</p>
+        </div>
+        <dl className="px-4 py-2">
+          <Fila etiqueta="Solicitud" valor={`#${resultado.id}`} />
+          <Fila etiqueta="Cliente" valor={etiquetaCliente(resultado)} />
+          {resultado.version > 1 && <Fila etiqueta="Versión" valor={`${resultado.version} (actualizada)`} />}
+          <Fila etiqueta="Monto" valor={formatearPesos(resultado.monto)} />
+          <Fila etiqueta="Tasa" valor={resultado.tasa_mensual == null ? "—" : formatearTasa(resultado.tasa_mensual)} />
+        </dl>
+      </div>
+    );
+  }
+  return (
+    <div className="mt-4 overflow-hidden rounded-xl border border-danger/25 bg-danger-soft">
+      <div className="flex items-center gap-3 px-4 pt-4">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-danger text-white"><Icono nombre="cruz" /></span>
+        <p className="text-xl font-bold text-danger">✕ Solicitud no aprobada</p>
+      </div>
+      <p className="px-4 pt-3 text-base text-ink">{MOTIVOS_RECHAZO[resultado.motivo] ?? "La solicitud no cumple los criterios de aprobación."}</p>
+      <p className="px-4 pb-4 pt-2 text-sm text-muted">
+        Solicitud #{resultado.id} · {detalleSolicitud(resultado)}. Puedes ajustar los datos y evaluar de nuevo.
+      </p>
+    </div>
+  );
+}
 
-  const loadApplications = useCallback(async () => {
-    setApplications(await requestApplications());
-    setHistoryError("");
+function Requisitos() {
+  const tasas = [
+    { etiqueta: `Estudiante con score ≥ ${TASAS.scorePreferencial}`, tasa: TASAS.preferencial, destacada: true },
+    { etiqueta: "Estudiante", tasa: TASAS.estudiante, destacada: false },
+    { etiqueta: "No estudiante", tasa: TASAS.general, destacada: false },
+  ];
+  return (
+    <Tarjeta icono="lista" titulo="Requisitos para aprobar">
+      <dl className="mt-3">
+        <Fila etiqueta="Edad" valor={`${REQUISITOS.edadMin} a ${REQUISITOS.edadMax} años`} />
+        <Fila etiqueta="Score crediticio" valor={`${REQUISITOS.scoreMin} puntos o más`} />
+        <Fila etiqueta="Ingresos mensuales" valor={`${formatearPesos(REQUISITOS.ingresosMin)} o más`} />
+        <Fila etiqueta="Monto" valor={`${formatearPesos(LIMITES.monto.min)} a ${formatearPesos(LIMITES.monto.max)}`} />
+      </dl>
+      <h3 className="mt-5 text-base font-bold text-cafe">Tasa si se aprueba</h3>
+      <dl className="mt-2 grid gap-2">
+        {tasas.map(({ etiqueta, tasa, destacada }) => (
+          <div className={`flex items-center justify-between gap-3 rounded-xl px-3.5 py-2.5 ${destacada ? "bg-brand text-white" : "bg-cream text-ink"}`} key={etiqueta}>
+            <dt className={`text-sm ${destacada ? "text-white" : "text-muted"}`}>{etiqueta}</dt>
+            <dd className="m-0 text-base font-bold">{formatearTasa(tasa)}</dd>
+          </div>
+        ))}
+      </dl>
+    </Tarjeta>
+  );
+}
+
+function Resumen({ solicitudes }: Readonly<{ solicitudes: Application[] }>) {
+  const aprobadas = solicitudes.filter((s) => s.decision === "APROBADO");
+  const montoAprobado = aprobadas.reduce((total, s) => total + s.monto, 0);
+  const datos: { etiqueta: string; valor: string; icono: NombreIcono; color: string }[] = [
+    { etiqueta: "Solicitudes evaluadas", valor: String(solicitudes.length), icono: "historial", color: "bg-cafe-soft text-cafe" },
+    { etiqueta: "Aprobadas", valor: String(aprobadas.length), icono: "check", color: "bg-brand-soft text-brand" },
+    { etiqueta: "Monto aprobado", valor: formatearPesos(montoAprobado), icono: "dinero", color: "bg-[#f6ead0] text-[#8a6420]" },
+  ];
+  return (
+    <section aria-label="Resumen de solicitudes" className="mt-6 grid gap-4 sm:grid-cols-3">
+      {datos.map(({ etiqueta, valor, icono, color }) => (
+        <article className="flex items-center gap-4 rounded-2xl border border-line bg-surface p-4 shadow-card" key={etiqueta}>
+          <span className={`grid h-12 w-12 shrink-0 place-items-center rounded-xl ${color}`}><Icono className="h-6 w-6" nombre={icono} /></span>
+          <div className="min-w-0">
+            <p className="text-sm text-muted">{etiqueta}</p>
+            <p className="truncate text-2xl font-extrabold text-ink">{valor}</p>
+          </div>
+        </article>
+      ))}
+    </section>
+  );
+}
+
+function Insignias({ solicitud }: Readonly<{ solicitud: Application }>) {
+  const color = solicitud.es_recurrente ? "bg-[#f1dca8] text-[#5f3f00]" : "bg-cafe-soft text-cafe";
+  return (
+    <span className="mt-1.5 flex flex-wrap gap-1.5">
+      <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${color}`}>{etiquetaCliente(solicitud)}</span>
+      {solicitud.version > 1 && (
+        <span className="rounded-full bg-brand-soft px-2 py-0.5 text-xs font-semibold text-brand-dark">
+          Actualizada · v{solicitud.version}
+        </span>
+      )}
+    </span>
+  );
+}
+
+function DialogoClienteExistente({ ultima, total, onActualizar, onNueva, onCancelar }: Readonly<{
+  ultima: Application; total: number; onActualizar: () => void; onNueva: () => void; onCancelar: () => void;
+}>) {
+  const estado = ultima.decision === "APROBADO" ? "aprobada" : "rechazada";
+  const cantidad = total === 1 ? "1 solicitud" : `${total} solicitudes`;
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/65 p-4 backdrop-blur-sm">
+      <div aria-describedby="dialogo-texto" aria-labelledby="dialogo-titulo" aria-modal="true"
+        className="w-full max-w-lg rounded-2xl border border-oro/40 bg-surface p-6 shadow-card" role="dialog">
+        <div className="flex items-center gap-3">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[#f1dca8] text-[#5f3f00]">
+            <Icono nombre="historial" />
+          </span>
+          <h2 className="text-xl font-bold text-cafe" id="dialogo-titulo">Este cliente ya tiene solicitudes</h2>
+        </div>
+        <div className="mt-3 grid gap-2 text-base text-ink" id="dialogo-texto">
+          <p>
+            <strong>{ultima.email}</strong> tiene {cantidad}. La más reciente es la <strong>#{ultima.id}</strong>{" "}
+            ({estado}, {formatearPesos(ultima.monto)}).
+          </p>
+          <p className="text-muted">¿Quieres actualizar esa solicitud con los datos nuevos o registrar una solicitud nueva?</p>
+        </div>
+        <div className="mt-5 grid gap-2.5 sm:grid-cols-2">
+          <button
+            autoFocus
+            className="rounded-xl bg-linear-to-r from-brand to-brand-dark px-4 py-3 text-base font-semibold text-white shadow-boton transition hover:brightness-110"
+            onClick={onActualizar}
+            type="button"
+          >
+            Actualizar la solicitud #{ultima.id}
+          </button>
+          <button
+            className="rounded-xl border border-cafe/40 bg-cafe-soft px-4 py-3 text-base font-semibold text-cafe transition hover:brightness-95"
+            onClick={onNueva}
+            type="button"
+          >
+            Crear una nueva solicitud
+          </button>
+          <button
+            className="rounded-xl px-4 py-2.5 text-sm font-semibold text-muted underline-offset-4 transition hover:underline sm:col-span-2"
+            onClick={onCancelar}
+            type="button"
+          >
+            Cancelar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Historial({ solicitudes, cargando, error, actualizando, onActualizar }: Readonly<{
+  solicitudes: Application[]; cargando: boolean; error: string; actualizando: boolean; onActualizar: () => void;
+}>) {
+  return (
+    <section aria-label="Historial de solicitudes" className="mt-6 rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <span className="grid h-10 w-10 place-items-center rounded-xl bg-cafe-soft text-cafe"><Icono nombre="historial" /></span>
+          <h2 className="text-lg font-bold text-cafe">Historial de solicitudes</h2>
+        </div>
+        <button
+          className="rounded-xl border border-line bg-cream px-4 py-2 text-sm font-semibold text-cafe transition hover:border-cafe/50 hover:bg-cafe-soft disabled:opacity-50"
+          disabled={actualizando}
+          onClick={onActualizar}
+          type="button"
+        >
+          {actualizando ? "Actualizando…" : "Actualizar"}
+        </button>
+      </div>
+
+      {cargando && <p className="mt-4 text-base text-muted">Cargando solicitudes…</p>}
+      {!cargando && error && <p className="mt-4 rounded-xl bg-danger-soft p-3 text-base text-danger" role="alert">{error}</p>}
+      {!cargando && !error && solicitudes.length === 0 && (
+        <p className="mt-4 rounded-xl border border-dashed border-line bg-cream p-4 text-base text-muted">
+          Todavía no hay solicitudes. Las que evalúes aparecerán aquí.
+        </p>
+      )}
+
+      {solicitudes.length > 0 && (
+        <div className="mt-4 overflow-x-auto rounded-xl border border-line">
+          <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+            <thead className="bg-cream text-cafe">
+              <tr>
+                <th className="px-4 py-3 font-semibold">Solicitud</th>
+                <th className="px-4 py-3 font-semibold">Fecha</th>
+                <th className="px-4 py-3 text-right font-semibold">Monto</th>
+                <th className="px-4 py-3 font-semibold">Resultado</th>
+                <th className="px-4 py-3 text-right font-semibold">Tasa mensual</th>
+              </tr>
+            </thead>
+            <tbody>
+              {solicitudes.map((s) => {
+                const aprobada = s.decision === "APROBADO";
+                const fecha = new Date(s.creado_en);
+                return (
+                  <tr className="border-t border-line transition hover:bg-cream/60" key={s.id}>
+                    <td className="px-4 py-3">
+                      <span className="block font-semibold text-ink">#{s.id} · {s.nombre}</span>
+                      <span className="block text-muted">{s.email}</span>
+                      <Insignias solicitud={s} />
+                    </td>
+                    <td className="px-4 py-3 text-ink">{Number.isNaN(fecha.getTime()) ? "—" : fechaHora.format(fecha)}</td>
+                    <td className="px-4 py-3 text-right font-semibold text-ink">{formatearPesos(s.monto)}</td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 font-semibold ${aprobada ? "bg-ok-soft text-ok" : "bg-danger-soft text-danger"}`}>
+                        <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-current" />
+                        {aprobada ? "Aprobada" : "Rechazada"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right text-ink">
+                      {s.tasa_mensual == null ? "—" : `${s.tasa_mensual.toLocaleString("es-CO")} %`}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function Bienvenida() {
+  const beneficios: { texto: string; icono: NombreIcono }[] = [
+    { texto: "Respuesta inmediata", icono: "rayo" },
+    { texto: `Tasas desde ${formatearTasa(TASAS.preferencial)}`, icono: "estudiante" },
+    { texto: "Sin compromiso", icono: "escudo" },
+  ];
+  return (
+    <section className="relative overflow-hidden rounded-3xl border border-oro/30 bg-linear-to-br from-brand via-brand-dark to-[#3b2a17] p-6 shadow-card sm:p-8">
+      <div aria-hidden="true" className="absolute -right-16 -top-16 h-56 w-56 rounded-full bg-oro/15" />
+      <div aria-hidden="true" className="absolute -bottom-20 right-24 h-44 w-44 rounded-full bg-[#fbf3e4]/10" />
+      <div className="relative">
+        <p className="text-sm font-bold uppercase tracking-wider text-oro">Microcrédito estudiantil</p>
+        <h1 className="mt-1 text-3xl font-extrabold text-white sm:text-4xl">Simula tu crédito</h1>
+        <p className="mt-2 max-w-2xl text-base text-white/90 sm:text-lg">
+          Ingresa tus datos y te diremos al instante si tu solicitud se aprueba y con qué tasa. Los valores están en pesos colombianos (COP).
+        </p>
+        <ul className="mt-5 flex flex-wrap gap-2.5">
+          {beneficios.map(({ texto, icono }) => (
+            <li className="inline-flex items-center gap-2 rounded-full bg-[#fbf3e4] px-3.5 py-2 text-sm font-semibold text-brand-dark shadow-card" key={texto}>
+              <Icono className="h-4 w-4 text-brand" nombre={icono} /> {texto}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </section>
+  );
+}
+
+// --------------------------------------------------------------------------------- página
+export default function Home() {
+  const [campos, setCampos] = useState<Campos>(CAMPOS_VACIOS);
+  const [tocados, setTocados] = useState<Partial<Record<CampoTexto, boolean>>>({});
+  const [intentoEnvio, setIntentoEnvio] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+  const [errorEnvio, setErrorEnvio] = useState("");
+  const [resultado, setResultado] = useState<Application | null>(null);
+
+  const [servicio, setServicio] = useState<EstadoServicio>("conectando");
+  const [reintentando, setReintentando] = useState(false);
+
+  const [historial, setHistorial] = useState<Application[]>([]);
+  const [cargandoHistorial, setCargandoHistorial] = useState(true);
+  const [errorHistorial, setErrorHistorial] = useState("");
+  const [actualizando, setActualizando] = useState(false);
+
+  const [confirmacion, setConfirmacion] = useState<{ ultima: Application; total: number } | null>(null);
+
+  useEffect(() => {
+    if (!confirmacion) return;
+    const alPresionar = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setConfirmacion(null);
+    };
+    globalThis.addEventListener("keydown", alPresionar);
+    return () => globalThis.removeEventListener("keydown", alPresionar);
+  }, [confirmacion]);
+
+  const panelResultado = useRef<HTMLDivElement>(null);
+  const interactivo = useInteractivo();
+  const errores = validar(campos);
+
+  const verificarServicio = useCallback(async (): Promise<boolean> => {
+    try {
+      const response = await fetch("/health", { cache: "no-store" });
+      setServicio(response.ok ? "activo" : "caido");
+      return response.ok;
+    } catch {
+      setServicio("caido");
+      return false;
+    }
+  }, []);
+
+  const cargarHistorial = useCallback(async () => {
+    try {
+      setHistorial(await pedirHistorial());
+      setErrorHistorial("");
+    } catch {
+      setErrorHistorial("No pudimos cargar el historial de solicitudes.");
+    }
   }, []);
 
   useEffect(() => {
-    let active = true;
+    let activo = true;
+    async function iniciar() {
+      const disponible = await verificarServicio();
+      if (disponible && activo) await cargarHistorial();
+      if (activo) setCargandoHistorial(false);
+    }
+    void iniciar();
+    return () => {
+      activo = false;
+    };
+  }, [verificarServicio, cargarHistorial]);
 
-    async function initialize() {
-      try {
-        const [records, health] = await Promise.all([
-          requestApplications(),
-          fetch("/health", { cache: "no-store" }),
-        ]);
-        if (!active) return;
-        setApplications(records);
-        setServiceOnline(health.ok);
-      } catch {
-        if (active) {
-          setHistoryError("No pudimos cargar tus solicitudes. Verifica tu conexión e inténtalo de nuevo.");
-          setServiceOnline(false);
-        }
-      } finally {
-        if (active) setIsLoading(false);
-      }
+  function alCambiar(event: ChangeEvent<HTMLInputElement>) {
+    const campo = event.target.name as CampoTexto;
+    const maximo = MAX_DIGITOS[campo];
+    const valor = maximo === undefined ? event.target.value : soloDigitos(event.target.value, maximo);
+    setCampos((previos) => ({ ...previos, [campo]: valor }));
+  }
+
+  function alSalir(event: FocusEvent<HTMLInputElement>) {
+    const campo = event.target.name as CampoTexto;
+    setTocados((previos) => ({ ...previos, [campo]: true }));
+  }
+
+  function errorVisible(campo: CampoTexto): string | undefined {
+    return intentoEnvio || tocados[campo] ? errores[campo] : undefined;
+  }
+
+  async function enviar(event: SubmitEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIntentoEnvio(true);
+    const primeroConError = ORDEN_CAMPOS.find((campo) => errores[campo]);
+    if (primeroConError) {
+      document.getElementById(primeroConError)?.focus();
+      return;
     }
 
-    void initialize();
-    return () => {
-      active = false;
-    };
-  }, []);
+    // Cliente recurrente: se pregunta si actualizar su última solicitud o crear una nueva.
+    const delCliente = solicitudesDelCliente(historial, campos.email);
+    if (delCliente.length > 0) {
+      setConfirmacion({ ultima: delCliente.at(-1) as Application, total: delCliente.length });
+      return;
+    }
+    await enviarSolicitud(null);
+  }
 
-  async function handleSubmit(event: SubmitEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    if (!form.reportValidity()) return;
-
-    const formData = new FormData(form);
-    const payload = {
-      nombre: formText(formData, "nombre"),
-      email: formText(formData, "email"),
-      edad: Number(formData.get("edad")),
-      score: Number(formData.get("score")),
-      ingresos: Number(formData.get("ingresos")),
-      monto: Number(formData.get("monto")),
-      es_estudiante: formData.has("es_estudiante"),
-    };
-
-    setIsSubmitting(true);
-    setFeedback(null);
-
+  /** idActualizar = null crea una solicitud nueva (POST); con un id, la reevalúa (PUT). */
+  async function enviarSolicitud(idActualizar: number | null) {
+    setConfirmacion(null);
+    setEnviando(true);
+    setErrorEnvio("");
+    const url = idActualizar === null ? "/api/v1/solicitudes" : `/api/v1/solicitudes/${idActualizar}`;
     try {
-      const response = await fetch("/api/v1/solicitudes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const body: unknown = await response.json();
-      if (!response.ok) throw new Error(errorMessage(body));
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method: idActualizar === null ? "POST" : "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(aSolicitud(campos)),
+        });
+      } catch {
+        setServicio("caido");
+        throw new Error(MENSAJE_SIN_SERVICIO);
+      }
+      const body = await leerJson(response);
+      if (response.status >= 500 || body === null) {
+        setServicio("caido");
+        throw new Error(MENSAJE_SIN_SERVICIO);
+      }
+      if (!response.ok) throw new Error(mensajeDeError(body));
       if (!isApplication(body)) throw new Error("La respuesta del servicio no tiene el formato esperado.");
 
-      setFeedback(feedbackFor(body));
-
-      form.reset();
-      await loadApplications();
+      setServicio("activo");
+      setResultado(body);
+      panelResultado.current?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+      await cargarHistorial();
     } catch (error) {
-      setFeedback({
-        message: error instanceof Error ? error.message : "No pudimos enviar tu solicitud. Inténtalo de nuevo.",
-        tone: "error",
-      });
+      setErrorEnvio(error instanceof Error ? error.message : MENSAJE_SIN_SERVICIO);
     } finally {
-      setIsSubmitting(false);
+      setEnviando(false);
     }
   }
 
-  async function handleRefresh() {
-    setIsRefreshing(true);
-    try {
-      await loadApplications();
-    } catch {
-      setHistoryError("No pudimos cargar tus solicitudes. Verifica tu conexión e inténtalo de nuevo.");
-    } finally {
-      setIsRefreshing(false);
+  async function reintentar() {
+    setReintentando(true);
+    if (await verificarServicio()) {
+      setErrorEnvio("");
+      await cargarHistorial();
     }
+    setReintentando(false);
   }
 
-  const approvedCount = applications.filter((application) => application.decision === "APROBADO").length;
-  const requestedAmount = applications.reduce((sum, application) => sum + Number(application.monto), 0);
-  const status = serviceStatus(serviceOnline);
+  async function actualizarHistorial() {
+    setActualizando(true);
+    await cargarHistorial();
+    setActualizando(false);
+  }
+
+  const propsComunes = { onChange: alCambiar, onBlur: alSalir };
 
   return (
-    <div className="min-h-screen md:flex">
-      <aside className="z-30 flex h-[68px] items-center justify-between bg-[#193b32] px-4 text-white md:fixed md:inset-y-0 md:left-0 md:h-screen md:w-64 md:flex-col md:items-stretch md:px-[18px] md:py-7">
-        <a aria-label="CrediUCC, inicio" className="flex items-center gap-3 md:px-2" href="#inicio">
-          <span className="grid h-9 w-9 grid-cols-2 place-content-center gap-[3px] rounded-xl border border-[#6f9e84] p-[7px]">
-            <i className="rounded-[2px] border border-[#b1d0b9]" />
-            <i className="rounded-[2px] bg-[#acc9ae]" />
-            <i className="rounded-[2px] bg-[#5e9d7b]" />
-            <i className="rounded-[2px] border border-[#b1d0b9]" />
-          </span>
-          <span className="font-display text-xl font-extrabold tracking-[-1px]">
-            credi<span className="text-[#a8c9a7]">ucc</span>
-            <small className="mt-1 block text-[8px] font-semibold tracking-[1.2px] text-[#9db5a8]">FINANCIACIÓN ESTUDIANTIL</small>
-          </span>
-        </a>
-
-        <nav aria-label="Navegación principal" className="flex items-center gap-1 md:mt-14 md:flex-col md:items-stretch">
-          <a className="flex h-10 items-center justify-center gap-3 rounded-lg bg-[#2b5145] px-3 text-[#fff] md:justify-start" href="#inicio" title="Resumen">
-            <Icon className="h-[18px] w-[18px]" name="grid" />
-            <span className="hidden text-xs font-medium sm:inline">Resumen</span>
-          </a>
-          <a className="flex h-10 items-center justify-center gap-3 rounded-lg px-3 text-[#bbcbc2] transition hover:bg-[#2b5145] hover:text-white md:justify-start" href="#nueva-solicitud" title="Nueva solicitud">
-            <Icon className="h-[18px] w-[18px]" name="plus" />
-            <span className="hidden text-xs font-medium sm:inline">Nueva solicitud</span>
-          </a>
-          <a className="flex h-10 items-center justify-center gap-3 rounded-lg px-3 text-[#bbcbc2] transition hover:bg-[#2b5145] hover:text-white md:justify-start" href="#mis-solicitudes" title="Mis solicitudes">
-            <Icon className="h-[18px] w-[18px]" name="file" />
-            <span className="hidden text-xs font-medium sm:inline">Mis solicitudes</span>
-          </a>
-        </nav>
-
-        <div className="hidden md:mt-auto md:block">
-          <div className="grid gap-2 rounded-xl border border-[#436456] bg-[#21463a] p-4">
-            <span className="grid h-8 w-8 place-items-center rounded-lg border border-[#62836f] text-[#c8dbb8]">
-              <span className="text-base">?</span>
-            </span>
-            <strong className="text-xs">¿Necesitas ayuda?</strong>
-            <span className="text-[10px] text-[#b0c5ba]">Acércate a tu campus UCC para recibir orientación.</span>
-          </div>
-          <div className="mt-5 flex items-center gap-2 px-1 text-[10px] text-[#a8beb2]">
-            <span className="h-2 w-2 rounded-full bg-[#71b584]" />
-            <span>Portal CrediUCC</span>
-            <span className="ml-auto text-[#819e90]">v1.0</span>
-          </div>
-        </div>
-      </aside>
-
-      <main className="min-w-0 flex-1 md:ml-64" id="inicio">
-        <header className="flex h-14 items-center justify-between border-b border-[#e8ece6] bg-[#fbfcfa] px-4 sm:px-7 lg:px-11">
-          <div className="flex items-center gap-2 text-[11px] text-[#9aa39d]">
-            Portal <span className="text-[#c4cbc6]">/</span> <strong className="font-semibold text-[#43544b]">Resumen</strong>
-          </div>
-          <div className="flex items-center gap-3 sm:gap-4">
-            <div className="flex items-center gap-2 text-[10px] text-[#738078]" aria-live="polite">
-              <span className={`h-2 w-2 rounded-full ${status.dot}`} />
-              <span className="hidden sm:inline">{status.label}</span>
-            </div>
-            <span className="h-6 w-px bg-[#e9ede8]" />
-            <span className="grid h-8 w-8 place-items-center rounded-full border border-[#dfe9df] bg-[#edf4ed] text-[10px] font-bold text-[#426c52]" aria-label="Comunidad UCC">UC</span>
-          </div>
-        </header>
-
-        <div className="mx-auto max-w-[1480px] px-4 py-6 sm:px-7 sm:py-8 lg:px-11">
-          <section className="mb-5 flex items-end justify-between gap-4">
+    <div className="min-h-screen">
+      <header className="border-b border-oro/40 bg-[#0d2015]/90 shadow-card backdrop-blur">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-4 sm:px-6">
+          <div className="flex items-center gap-3">
+            <Logo />
             <div>
-              <p className="mb-2 flex items-center gap-2 text-[9px] font-bold tracking-[1.1px] text-[#758c7e]">
-                <span className="h-px w-4 bg-[#8eaf91]" /> FINANCIACIÓN PARA TUS METAS
+              <p className="text-2xl font-extrabold tracking-tight text-white">
+                Credi<span className="text-oro">UCC</span>
               </p>
-              <h1 className="font-display text-[25px] font-extrabold tracking-[-1px] text-[#1c302c] sm:text-[29px]">
-                Hola, <span className="text-[#317452]">estudiante.</span>
-              </h1>
-              <p className="mt-1 text-[11px] text-[#818b85] sm:text-xs">Un impulso para eso que quieres lograr. ¿Qué tienes en mente?</p>
+              <p className="text-sm text-white/85">Simulador de microcrédito estudiantil</p>
             </div>
-            <a className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-[#dbe5db] bg-white px-2.5 py-2 text-[10px] font-bold text-[#345b44] transition hover:border-[#9fbea4] sm:px-3.5 sm:text-[11px]" href="#nueva-solicitud">
-              <Icon className="h-4 w-4" name="plus" /> <span className="sm:hidden">Solicitar</span><span className="hidden sm:inline">Solicitar crédito</span>
-            </a>
-          </section>
-
-          <section aria-label="Información de CrediUCC" className="relative isolate flex min-h-[190px] overflow-hidden rounded-2xl bg-[#174b3d] px-5 py-6 text-white sm:px-8">
-            <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(ellipse_at_68%_115%,#72a27955_0,transparent_34%)]" />
-            <div className="relative z-10 max-w-[58%] sm:max-w-[56%]">
-              <span className="inline-flex items-center gap-2 text-[8px] font-bold tracking-[1.15px] text-[#bed4bd]">
-                <Icon className="h-3.5 w-3.5 text-[#d1dba0]" name="sparkle" /> TU FUTURO, A TU RITMO
-              </span>
-              <h2 className="mt-2 font-display text-[21px] font-bold leading-tight tracking-[-.7px] sm:text-2xl">
-                Las grandes ideas<br />merecen <em className="not-italic text-[#c6d9a8]">un comienzo.</em>
-              </h2>
-              <p className="mt-2 max-w-[340px] text-[9px] leading-relaxed text-[#c0d3ca] sm:text-[10px]">
-                Financiación pensada para acompañar tus proyectos y tu vida universitaria.
-              </p>
-              <a className="mt-2 inline-flex items-center gap-2 text-[10px] font-bold text-[#e1edcc]" href="#nueva-solicitud">
-                Conoce tu opción <Icon className="h-3.5 w-3.5" name="arrow" />
-              </a>
-              <p className="mt-1 text-[8px] font-semibold text-[#d5e4c2] sm:hidden">Tasas desde 1,2% mensual*</p>
-            </div>
-            <div aria-hidden="true" className="absolute -right-7 top-0 h-full w-[46%] sm:right-[2%] sm:w-[40%]">
-              <div className="absolute right-[15%] top-12 h-24 w-52 rotate-[-25deg] rounded-[50%] border border-[#c5d6a64a]" />
-              <div className="absolute right-[15%] top-12 h-24 w-52 rotate-[25deg] rounded-[50%] border border-[#c5d6a64a]" />
-              <div className="absolute right-[28%] top-5 grid h-36 w-36 place-items-center rounded-full border border-[#b5c98938] bg-[radial-gradient(circle_at_44%_34%,#408468_0,#276b53_45%,#1b5140_78%)] shadow-[0_0_0_18px_#98b98b0a,0_0_0_38px_#98b98b08]">
-                <span className="absolute left-9 top-8 grid h-14 w-14 place-items-center rounded-full border border-[#c6aa67] bg-[linear-gradient(145deg,#d7c27f,#aa8540)] text-xl text-[#876e34]">$</span>
-                <span className="absolute left-14 top-14 grid h-[68px] w-[68px] place-items-center rounded-full border border-[#e6d98d] bg-[linear-gradient(145deg,#f8edbd,#c99f4e)] font-display text-3xl text-[#826633] shadow-[inset_0_0_0_4px_#f4e5ac,inset_0_0_0_5px_#c79d4c]">
-                  $<small className="absolute bottom-3 text-[7px] font-bold tracking-[1.5px]">UCC</small>
-                </span>
-                <span className="absolute left-5 top-3 text-base text-[#d6dfa9]">✳</span>
-                <span className="absolute bottom-5 right-4 text-sm text-[#98c7a8]">✦</span>
-              </div>
-              <div className="absolute bottom-5 right-[1%] hidden items-center gap-2 rounded-lg border border-[#e3e7d74d] bg-[#285d49] px-3 py-2 shadow-lg sm:flex">
-                <span className="grid h-6 w-6 place-items-center rounded-md bg-[#dce8c2] text-sm text-[#376747] sm:h-7 sm:w-7 sm:text-lg">↘</span>
-                <span><small className="block text-[7px] font-bold tracking-[1px] text-[#bad0bd]">TASAS DESDE</small><strong className="font-display text-sm">1,2% <i className="text-[8px] font-normal text-[#c4d6c3]">mensual</i></strong></span>
-              </div>
-            </div>
-            <p className="absolute bottom-2 right-3 text-right text-[7px] text-[#b5cdbd]">*La tasa final depende de tu perfil y resultado de evaluación.</p>
-          </section>
-
-          <section aria-label="Resumen de solicitudes" className="my-4 grid gap-2.5 sm:grid-cols-3">
-            <article className="relative flex min-h-[76px] items-center gap-3 overflow-hidden rounded-xl border border-[#e9ede8] bg-white px-4 py-3">
-              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#e7f3eb] text-[#477954]"><Icon className="h-5 w-5" name="file" /></span>
-              <div className="grid min-w-0 gap-0.5"><span className="text-[9px] text-[#7d8981]">Solicitudes registradas</span><strong className="font-display text-xl font-extrabold text-[#20372d]">{applications.length}</strong><small className="text-[8px] text-[#a1aaa4]">En este dispositivo</small></div>
-              <span className="absolute -right-4 -top-5 h-16 w-16 rounded-full bg-[#e7f3eb] opacity-50" />
-            </article>
-            <article className="relative flex min-h-[76px] items-center gap-3 overflow-hidden rounded-xl border border-[#e9ede8] bg-white px-4 py-3">
-              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#f0edf8] text-[#7866a5]"><Icon className="h-5 w-5" name="check" /></span>
-              <div className="grid min-w-0 gap-0.5"><span className="text-[9px] text-[#7d8981]">Aprobadas</span><strong className="font-display text-xl font-extrabold text-[#20372d]">{approvedCount}</strong><small className="text-[8px] text-[#a1aaa4]">¡Un paso más cerca!</small></div>
-              <span className="absolute -right-4 -top-5 h-16 w-16 rounded-full bg-[#f0edf8] opacity-50" />
-            </article>
-            <article className="relative flex min-h-[76px] items-center gap-3 overflow-hidden rounded-xl border border-[#e9ede8] bg-white px-4 py-3">
-              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#fff0e3] text-[#bd8054]"><Icon className="h-5 w-5" name="money" /></span>
-              <div className="grid min-w-0 gap-0.5"><span className="text-[9px] text-[#7d8981]">Valor solicitado</span><strong className="truncate font-display text-lg font-extrabold text-[#20372d]">{currency.format(requestedAmount)}</strong><small className="text-[8px] text-[#a1aaa4]">Total acumulado</small></div>
-              <span className="absolute -right-4 -top-5 h-16 w-16 rounded-full bg-[#fff0e3] opacity-50" />
-            </article>
-          </section>
-
-          <section className="grid items-start gap-3.5 lg:grid-cols-[minmax(0,1.8fr)_minmax(245px,.82fr)]">
-            <article className="scroll-mt-5 rounded-xl border border-[#e8ece7] bg-white p-4 sm:p-6" id="nueva-solicitud">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-[8px] font-bold tracking-[1.1px] text-[#82958a]">EMPECEMOS</p>
-                  <h2 className="mt-1 font-display text-base font-extrabold tracking-[-.4px] text-[#1c302c] sm:text-lg">Cuéntanos sobre ti</h2>
-                  <p className="mt-1 text-[10px] text-[#8a948e]">Completa tus datos y evaluaremos tu solicitud.</p>
-                </div>
-                <span className="mt-1 rounded-md border border-[#e7ece7] px-2 py-1 text-[8px] text-[#a4ada7]"><strong className="text-[#3f7352]">01</strong> / 01</span>
-              </div>
-
-              <div className="my-4 flex items-center gap-2 rounded-lg border border-[#e8eee6] bg-[#f7faf6] px-3 py-2.5 text-[9px] leading-relaxed text-[#7a887f]" role="note">
-                <span className="grid h-[18px] w-[18px] shrink-0 place-items-center rounded-full border border-[#a6bda8] font-display text-[10px] font-bold text-[#63866d]">i</span>
-                <span>La evaluación es inmediata. Completa tus datos para consultar el resultado.</span>
-              </div>
-
-              <form className="grid gap-x-3 gap-y-3.5 sm:grid-cols-2" onSubmit={handleSubmit}>
-                <label className="grid gap-1.5 sm:col-span-2">
-                  <span className="text-[9px] font-bold text-[#4a5e52]">Nombre completo <b className="text-[#c7795f]">*</b></span>
-                  <span className="flex h-[38px] items-center rounded-lg border border-[#e5eae4] bg-[#fdfefd] px-2.5 transition focus-within:border-[#80a78a] focus-within:ring-4 focus-within:ring-[#39775112]">
-                    <Icon className="mr-2 h-4 w-4 shrink-0 text-[#9aa79d]" name="user" />
-                    <input autoComplete="name" className="h-full w-full bg-transparent text-[10px] text-[#354c3e] outline-none placeholder:text-[#b1bbb4]" maxLength={120} name="nombre" placeholder="Ej. Laura Rojas" required />
-                  </span>
-                </label>
-
-                <label className="grid gap-1.5 sm:col-span-2">
-                  <span className="text-[9px] font-bold text-[#4a5e52]">Correo electrónico <b className="text-[#c7795f]">*</b></span>
-                  <span className="flex h-[38px] items-center rounded-lg border border-[#e5eae4] bg-[#fdfefd] px-2.5 transition focus-within:border-[#80a78a] focus-within:ring-4 focus-within:ring-[#39775112]">
-                    <Icon className="mr-2 h-4 w-4 shrink-0 text-[#9aa79d]" name="mail" />
-                    <input autoComplete="email" className="h-full w-full bg-transparent text-[10px] text-[#354c3e] outline-none placeholder:text-[#b1bbb4]" maxLength={254} name="email" placeholder="nombre@correo.com" required type="email" />
-                  </span>
-                </label>
-
-                <label className="grid gap-1.5">
-                  <span className="text-[9px] font-bold text-[#4a5e52]">Edad <b className="text-[#c7795f]">*</b></span>
-                  <span className="flex h-[38px] items-center rounded-lg border border-[#e5eae4] bg-[#fdfefd] px-2.5 transition focus-within:border-[#80a78a] focus-within:ring-4 focus-within:ring-[#39775112]">
-                    <input className="h-full w-full bg-transparent text-[10px] text-[#354c3e] outline-none placeholder:text-[#b1bbb4]" max={120} min={0} name="edad" placeholder="22" required type="number" />
-                    <span className="text-[9px] text-[#a1aaa4]">años</span>
-                  </span>
-                  <small className="text-[8px] text-[#9aa49c]">Elegibilidad: entre 18 y 65 años</small>
-                </label>
-
-                <label className="grid gap-1.5">
-                  <span className="text-[9px] font-bold text-[#4a5e52]">Score crediticio <b className="text-[#c7795f]">*</b></span>
-                  <span className="flex h-[38px] items-center rounded-lg border border-[#e5eae4] bg-[#fdfefd] px-2.5 transition focus-within:border-[#80a78a] focus-within:ring-4 focus-within:ring-[#39775112]">
-                    <input className="h-full w-full bg-transparent text-[10px] text-[#354c3e] outline-none placeholder:text-[#b1bbb4]" max={850} min={300} name="score" placeholder="720" required type="number" />
-                    <span className="text-[9px] text-[#a1aaa4]">/ 850</span>
-                  </span>
-                  <small className="text-[8px] text-[#9aa49c]">Mínimo para aprobación: 600</small>
-                </label>
-
-                <label className="grid gap-1.5">
-                  <span className="text-[9px] font-bold text-[#4a5e52]">Ingresos mensuales <b className="text-[#c7795f]">*</b></span>
-                  <span className="flex h-[38px] items-center rounded-lg border border-[#e5eae4] bg-[#fdfefd] px-2.5 transition focus-within:border-[#80a78a] focus-within:ring-4 focus-within:ring-[#39775112]">
-                    <span className="mr-2 text-[10px] font-semibold text-[#718577]">$</span>
-                    <input className="h-full w-full bg-transparent text-[10px] text-[#354c3e] outline-none placeholder:text-[#b1bbb4]" min={0} name="ingresos" placeholder="2.500" required step="any" type="number" />
-                  </span>
-                  <small className="text-[8px] text-[#9aa49c]">Mínimo para aprobación: $2.000</small>
-                </label>
-
-                <label className="flex min-h-[51px] cursor-pointer items-center rounded-lg border border-[#e5eae4] bg-[#fdfefd] px-2.5 py-2">
-                  <span className="grid gap-1 text-[9px] font-bold text-[#506356]">Beneficio estudiante<small className="text-[8px] font-normal text-[#99a39b]">Cuéntanos si estudias en la UCC</small></span>
-                  <input className="peer sr-only" defaultChecked name="es_estudiante" type="checkbox" />
-                  <span aria-hidden="true" className="relative ml-auto h-[18px] w-8 rounded-full bg-[#d4dcd5] transition peer-checked:bg-[#4f8d63] after:absolute after:left-[3px] after:top-[3px] after:h-3 after:w-3 after:rounded-full after:bg-white after:shadow after:transition peer-checked:after:translate-x-3.5 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-[#39775155]" />
-                </label>
-
-                <label className="grid gap-1.5 sm:col-span-2">
-                  <span className="text-[9px] font-bold text-[#4a5e52]">¿Cuánto necesitas? <b className="text-[#c7795f]">*</b></span>
-                  <span className="flex h-[38px] items-center rounded-lg border border-[#e5eae4] bg-[#fdfefd] px-2.5 transition focus-within:border-[#80a78a] focus-within:ring-4 focus-within:ring-[#39775112]">
-                    <span className="mr-2 text-[10px] font-semibold text-[#718577]">$</span>
-                    <input className="h-full w-full bg-transparent text-[10px] text-[#354c3e] outline-none placeholder:text-[#b1bbb4]" max={5000} min={100} name="monto" placeholder="1.500" required step={100} type="number" />
-                  </span>
-                  <small className="text-[8px] text-[#9aa49c]">Puedes solicitar entre $100 y $5.000</small>
-                </label>
-
-                <div className="mt-1 flex flex-col gap-3 border-t border-[#edf0ec] pt-3 sm:col-span-2 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="m-0 flex items-center gap-1.5 text-[8px] text-[#97a199]">
-                    <Icon className="h-3.5 w-3.5 text-[#6a9271]" name="clock" /> Evaluación inmediata <span className="text-[#c5ccc6]">·</span> Sin compromiso
-                  </p>
-                  <button className="inline-flex min-h-[39px] items-center justify-center gap-2 rounded-lg bg-[#286649] px-4 text-[10px] font-bold text-white transition hover:bg-[#1e573c] disabled:cursor-wait disabled:opacity-60" disabled={isSubmitting} type="submit">
-                    {isSubmitting ? "Evaluando..." : "Evaluar mi solicitud"}
-                    <Icon className="h-4 w-4" name="arrow" />
-                  </button>
-                </div>
-                {feedback && (
-                  <output
-                    aria-live="polite"
-                    className={`flex items-start gap-2 rounded-lg border px-3 py-2.5 text-[10px] leading-relaxed sm:col-span-2 ${feedback.tone === "success" ? "border-[#d9e8dc] bg-[#f2f8f2] text-[#3e6e4b]" : "border-[#eedbd4] bg-[#fff7f4] text-[#a95948]"}`}
-                  >
-                    <span className="font-extrabold">{feedback.tone === "success" ? "✓" : "!"}</span>
-                    <span>{feedback.message}</span>
-                  </output>
-                )}
-              </form>
-            </article>
-
-            <aside className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-1">
-              <article className="rounded-xl border border-[#e8ece7] bg-white p-4 sm:p-5">
-                <div className="flex items-center gap-2.5">
-                  <span className="grid h-8 w-8 place-items-center rounded-lg bg-[#edf4e9] text-[#6c9666]"><Icon className="h-4 w-4" name="sparkle" /></span>
-                  <div><p className="text-[7px] font-bold tracking-[1px] text-[#82958a]">ANTES DE EMPEZAR</p><h2 className="mt-0.5 font-display text-sm font-extrabold text-[#1c302c]">¿Cómo funciona?</h2></div>
-                </div>
-                <p className="mb-2 mt-3 text-[9px] leading-relaxed text-[#89948d]">Revisamos tres criterios para darte una respuesta al instante.</p>
-                <ol className="m-0 list-none p-0">
-                  {[["01", "Edad", "Entre 18 y 65 años"], ["02", "Score crediticio", "600 puntos o más"], ["03", "Ingresos mensuales", "Desde $2.000"]].map(([number, title, description]) => (
-                    <li className="flex min-h-[51px] items-center gap-2.5 border-t border-[#edf0ec]" key={number}>
-                      <span className="font-display text-[8px] font-bold text-[#acb7ac]">{number}</span>
-                      <span className="grid gap-1"><strong className="text-[9px] text-[#46584c]">{title}</strong><small className="text-[8px] text-[#9aa49d]">{description}</small></span>
-                      <span className="ml-auto grid h-[17px] w-[17px] place-items-center rounded-full bg-[#edf5ec] text-[9px] text-[#5c8c62]">✓</span>
-                    </li>
-                  ))}
-                </ol>
-                <div className="mt-2 flex items-center gap-2 rounded-md bg-[#f5f8f3] px-2 py-2 text-[8px] text-[#718575]">
-                  <Icon className="h-3.5 w-3.5 text-[#4f8561]" name="arrow" /> La evaluación toma solo unos segundos
-                </div>
-              </article>
-
-              <article className="relative isolate min-h-[170px] overflow-hidden rounded-xl bg-[#e9efe1] p-4 sm:p-5">
-                <div aria-hidden="true" className="absolute -right-12 -top-14 -z-10 h-48 w-48 rounded-full border border-[#91a9814d] shadow-[0_0_0_16px_#91a9810b,0_0_0_32px_#91a9810b]" />
-                <div className="flex items-center gap-1.5 text-[7px] font-bold tracking-[.9px] text-[#718671]">
-                  <Icon className="h-3.5 w-3.5 text-[#7c9a63]" name="sparkle" /> UN BENEFICIO PARA TI
-                </div>
-                <h3 className="mt-3 font-display text-lg font-extrabold leading-tight tracking-[-.5px] text-[#284736]">Tu esfuerzo<br />tiene <em className="not-italic text-[#5c8458]">recompensa.</em></h3>
-                <p className="relative mt-1.5 max-w-[190px] text-[8px] leading-relaxed text-[#718273]">Si eres estudiante, podrías acceder a una tasa preferencial.</p>
-                <a className="mt-2 inline-flex items-center gap-1 text-[8px] font-bold text-[#3a6e4b]" href="#nueva-solicitud">Descubre tu tasa <Icon className="h-3 w-3" name="arrow" /></a>
-                <span aria-hidden="true" className="absolute bottom-5 right-5 grid h-14 w-14 rotate-12 place-items-center rounded-full border border-[#c5bf82] bg-[linear-gradient(145deg,#efe4ad,#c6af65)] font-display text-2xl text-[#8a7540] shadow-[inset_0_0_0_4px_#f1e7be,inset_0_0_0_5px_#bd9f4e]">$</span>
-              </article>
-            </aside>
-          </section>
-
-          <section className="mt-4 scroll-mt-5 rounded-xl border border-[#e8ece7] bg-white p-4 sm:p-5" id="mis-solicitudes">
-            <div className="mb-3.5 flex items-center justify-between gap-3">
-              <div><p className="text-[8px] font-bold tracking-[1.1px] text-[#82958a]">TU ACTIVIDAD</p><h2 className="mt-1 font-display text-base font-extrabold text-[#1c302c]">Mis solicitudes</h2></div>
-              <button aria-label="Actualizar solicitudes" className="inline-flex items-center gap-1.5 rounded-md border border-[#e5eae4] px-2.5 py-2 text-[9px] text-[#64746a] transition hover:border-[#b8cdbb] disabled:opacity-50" disabled={isRefreshing} onClick={handleRefresh} type="button">
-                <Icon className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}`} name="refresh" /> <span className="hidden sm:inline">Actualizar</span>
-              </button>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[610px] border-collapse text-left">
-                <thead className="bg-[#f7f9f6] text-[8px] text-[#929e95]">
-                  <tr><th className="px-3 py-2.5 font-semibold">Solicitud</th><th className="px-3 py-2.5 font-semibold">Fecha</th><th className="px-3 py-2.5 font-semibold">Monto</th><th className="px-3 py-2.5 font-semibold">Estado</th><th className="px-3 py-2.5 font-semibold">Tasa mensual</th></tr>
-                </thead>
-                <tbody>
-                  {applications.map((application) => {
-                    const approved = application.decision === "APROBADO";
-                    const createdAt = new Date(application.creado_en);
-                    return (
-                      <tr className="border-b border-[#eff1ee] text-[9px] text-[#6f7d73] last:border-0" key={application.id}>
-                        <td className="px-3 py-3"><strong className="block text-[#405649]">Solicitud #{application.id}</strong><small className="mt-1 block text-[8px] text-[#a0aaa2]">{application.nombre} · {application.email}</small></td>
-                        <td className="px-3 py-3">{Number.isNaN(createdAt.getTime()) ? "—" : dateTime.format(createdAt)}</td>
-                        <td className="px-3 py-3">{currency.format(application.monto)}</td>
-                        <td className="px-3 py-3"><span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[8px] font-semibold ${approved ? "bg-[#eaf5ec] text-[#54845c]" : "bg-[#fff0eb] text-[#b56e5b]"}`}><i className="h-[5px] w-[5px] rounded-full bg-current" />{approved ? "Aprobada" : "Rechazada"}</span></td>
-                        <td className="px-3 py-3 font-bold text-[#4e7656]">{application.tasa_mensual == null ? "—" : `${application.tasa_mensual.toLocaleString("es-CO")}%`}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            <HistoryStatus error={historyError} isEmpty={applications.length === 0} isLoading={isLoading} />
-            <p className="mt-2 flex items-center gap-2 border-t border-[#eff1ee] pt-3 text-[8px] text-[#a0aaa2]">
-              <span className="h-[5px] w-[5px] rounded-full bg-[#71b584]" /> Tus solicitudes se guardan mientras la sesión de la aplicación esté activa.
-            </p>
-          </section>
-
-          <footer className="mt-4 flex items-center gap-1 text-[8px] text-[#a3aca5]">
-            <strong className="text-[#65796c]">CrediUCC</strong>
-            <span>· Una iniciativa para impulsar tus metas</span>
-            <span className="ml-auto">2026</span>
-          </footer>
+          </div>
+          <IndicadorServicio estado={servicio} />
         </div>
+      </header>
+
+      <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
+        {servicio === "caido" && (
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-warn/30 bg-warn-soft p-4 shadow-card" role="alert">
+            <div className="max-w-2xl">
+              <p className="text-base font-bold text-warn">No hay conexión con el servicio de evaluación</p>
+              <p className="mt-1 text-sm text-ink">
+                Las solicitudes no se pueden evaluar mientras la API esté apagada. Si estás probando en tu equipo, iníciala con{" "}
+                <code className="rounded bg-surface px-1.5 py-0.5 text-[0.85em]">python -m uvicorn app.main:app --port 8000</code>.
+              </p>
+            </div>
+            <button
+              className="rounded-xl bg-cafe px-5 py-2.5 text-sm font-semibold text-white shadow-card transition hover:brightness-110 disabled:opacity-60"
+              disabled={reintentando}
+              onClick={reintentar}
+              type="button"
+            >
+              {reintentando ? "Reintentando…" : "Reintentar"}
+            </button>
+          </div>
+        )}
+
+        <Bienvenida />
+        <Resumen solicitudes={historial} />
+
+        <div className="mt-6 grid items-start gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+          <Tarjeta icono="usuario" titulo="Tus datos">
+            <form className="mt-5 grid gap-5 sm:grid-cols-2" noValidate onSubmit={enviar}>
+              <CampoFormulario {...propsComunes} autoComplete="name" campo="nombre" className="sm:col-span-2"
+                error={errorVisible("nombre")} etiqueta="Nombre completo" placeholder="Laura Rojas" valor={campos.nombre} />
+              <CampoFormulario {...propsComunes} autoComplete="email" campo="email" className="sm:col-span-2"
+                error={errorVisible("email")} etiqueta="Correo electrónico" placeholder="nombre@correo.com" tipo="email" valor={campos.email} />
+              <CampoFormulario {...propsComunes} ayuda="Para aprobar: entre 18 y 65 años." campo="edad" error={errorVisible("edad")}
+                etiqueta="Edad" numerico placeholder="22" sufijo="años" valor={campos.edad} />
+              <CampoFormulario {...propsComunes} ayuda="De 300 a 850. Para aprobar: 600 o más." campo="score" error={errorVisible("score")}
+                etiqueta="Score crediticio" numerico placeholder="720" sufijo="puntos" valor={campos.score} />
+              <CampoFormulario {...propsComunes} ayuda={`Para aprobar: ${formatearPesos(REQUISITOS.ingresosMin)} o más.`} campo="ingresos"
+                error={errorVisible("ingresos")} etiqueta="Ingresos mensuales" numerico placeholder="2.500.000" prefijo="$" sufijo="COP"
+                valor={agruparMiles(campos.ingresos)} />
+              <CampoFormulario {...propsComunes} ayuda={`Entre ${formatearPesos(LIMITES.monto.min)} y ${formatearPesos(LIMITES.monto.max)}.`}
+                campo="monto" error={errorVisible("monto")} etiqueta="¿Cuánto necesitas?" numerico placeholder="3.000.000" prefijo="$"
+                sufijo="COP" valor={agruparMiles(campos.monto)} />
+
+              <label className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3.5 transition sm:col-span-2 ${campos.esEstudiante ? "border-brand/40 bg-brand-soft" : "border-line bg-cream"}`}>
+                <input
+                  checked={campos.esEstudiante}
+                  className="h-5 w-5 accent-brand"
+                  name="esEstudiante"
+                  onChange={(event) => setCampos((previos) => ({ ...previos, esEstudiante: event.target.checked }))}
+                  type="checkbox"
+                />
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-surface text-brand"><Icono nombre="estudiante" /></span>
+                <span>
+                  <span className="block text-base font-semibold text-ink">Soy estudiante de la UCC</span>
+                  <span className="block text-sm text-muted">Los estudiantes acceden a una tasa más baja.</span>
+                </span>
+              </label>
+
+              {intentoEnvio && Object.keys(errores).length > 0 && (
+                <p className="text-sm font-medium text-danger sm:col-span-2" role="alert">
+                  Revisa los campos marcados en rojo antes de continuar.
+                </p>
+              )}
+              {errorEnvio && (
+                <p className="rounded-xl border border-danger/30 bg-danger-soft p-3 text-sm font-medium text-danger sm:col-span-2" role="alert">
+                  {errorEnvio}
+                </p>
+              )}
+
+              <button
+                className="h-12 rounded-xl bg-linear-to-r from-brand to-brand-dark px-7 text-base font-semibold text-white shadow-boton transition hover:brightness-110 disabled:cursor-wait disabled:opacity-60 sm:col-span-2 sm:justify-self-start"
+                disabled={!interactivo || enviando}
+                type="submit"
+              >
+                {textoBotonEvaluar(interactivo, enviando)}
+              </button>
+            </form>
+          </Tarjeta>
+
+          <div className="grid gap-6">
+            <div aria-live="polite" ref={panelResultado}>
+              <Tarjeta icono="resultado" titulo="Resultado">
+                <PanelResultado resultado={resultado} />
+              </Tarjeta>
+            </div>
+            <Requisitos />
+          </div>
+        </div>
+
+        {confirmacion && (
+          <DialogoClienteExistente
+            onActualizar={() => void enviarSolicitud(confirmacion.ultima.id)}
+            onCancelar={() => setConfirmacion(null)}
+            onNueva={() => void enviarSolicitud(null)}
+            total={confirmacion.total}
+            ultima={confirmacion.ultima}
+          />
+        )}
+
+        <Historial
+          actualizando={actualizando}
+          cargando={cargandoHistorial}
+          error={errorHistorial}
+          onActualizar={actualizarHistorial}
+          solicitudes={historial}
+        />
       </main>
+
+      <footer className="mt-4 border-t border-oro/25">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3 px-4 py-5 text-sm text-white/80 sm:px-6">
+          <Logo className="h-7 w-7" />
+          <span><strong className="text-oro">CrediUCC</strong> · Proyecto de Pruebas y Mantenimiento de Software</span>
+        </div>
+      </footer>
     </div>
   );
 }

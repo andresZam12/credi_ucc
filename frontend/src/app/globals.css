@@ -1,23 +1,56 @@
 @import "tailwindcss";
 
-@theme inline {
-  --font-sans: "Segoe UI", Arial, sans-serif;
-  --font-display: "Segoe UI", Arial, sans-serif;
+/* Paleta CrediUCC (tema oscuro cálido):
+   - Fondo de la página: verde bosque profundo. Sobre él solo va texto crema.
+   - Cards: beige crema con sombras marcadas. Sobre ellas solo va texto oscuro o café.
+   Contrastes: ink/surface ≈ 14:1, muted/surface ≈ 7:1, cafe/surface ≈ 7:1, cream/canvas ≈ 11:1 (AA o superior). */
+@theme {
+  --font-sans: "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+
+  --color-canvas: #15301f;
+  --color-canvas-dark: #0d2015;
+  --color-surface: #f8efdf;
+  --color-cream: #efe2cb;
+  --color-line: #d8c4a3;
+  --color-ink: #2a1f15;
+  --color-muted: #5c4835;
+
+  --color-brand: #2f6b3f;
+  --color-brand-dark: #1d4a2b;
+  --color-brand-soft: #d6e8cd;
+  --color-cafe: #6f4423;
+  --color-cafe-soft: #e8d3b5;
+  --color-oro: #d4ad5f;
+  --color-claro: #fbf3e4;
+
+  --color-ok: #1f6335;
+  --color-ok-soft: #d5ebd6;
+  --color-danger: #9e2c1a;
+  --color-danger-soft: #f6dcd3;
+  --color-warn: #6e4300;
+  --color-warn-soft: #fbe7bd;
+
+  --shadow-card: 0 2px 4px rgb(0 0 0 / 0.18), 0 18px 40px -14px rgb(0 0 0 / 0.55);
+  --shadow-boton: 0 8px 18px -6px rgb(13 32 21 / 0.7);
 }
 
-* { box-sizing: border-box; }
-html { min-width: 320px; scroll-behavior: smooth; scroll-padding-top: 20px; }
+html {
+  min-width: 320px;
+  scroll-behavior: smooth;
+}
+
+/* Fondo con colores literales (no variables del tema): siempre se ve oscuro, aunque la caché de
+   desarrollo de Next/Turbopack todavía tenga una versión anterior de @theme. */
 body {
   margin: 0;
-  font-family: "Segoe UI", Arial, sans-serif;
+  background-color: #15301f;
+  background-image:
+    radial-gradient(1200px 600px at 85% -10%, rgb(212 173 95 / 0.16), transparent 60%),
+    radial-gradient(900px 500px at -10% 30%, rgb(47 107 63 / 0.35), transparent 60%),
+    linear-gradient(180deg, #15301f, #0d2015);
+  background-attachment: fixed;
 }
 
-button, input {
-  font: inherit;
-}
-
-/* Fuera de cualquier @layer: las reglas sin capa ganan a las utilidades de Tailwind
-   (que viven en @layer utilities), por lo que no hace falta !important. */
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *, *::before, *::after {

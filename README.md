@@ -28,9 +28,9 @@ app/
 deploy/deploy.py        PipelineDespliegue, ClienteStaging, RegistroReleases, Notificador (Consola)
 infra/init_infra.py     AprovisionadorIaC + EstadoDeseado (idempotente)
 load/                   locustfile.py (enjambre) + verificar_slo.py (Quality Gate de rendimiento)
-tests/unit/             81 pruebas (incluye test_antipatrones.py), ~95 % de cobertura de líneas y ramas (Quality Gate ≥ 80 %)
-tests/api/              14 pruebas de caja negra en el contenedor test-runner (JSON Schema + S3/SQS)
-frontend/src/app/       10 pruebas de interfaz (Vitest + Testing Library) con cobertura LCOV
+tests/unit/             93 pruebas (incluye test_antipatrones.py), ~95 % de cobertura de líneas y ramas (Quality Gate ≥ 80 %)
+tests/api/              15 pruebas de caja negra en el contenedor test-runner (JSON Schema + S3/SQS)
+frontend/src/           67 pruebas Vitest: lib/credito.test.ts (lógica, 38) y app/page.test.tsx (interfaz, 29)
 .github/workflows/      sonarcloud.yml (CI) → cd.yml (contrato → carga → despliegue)
 ```
 
@@ -93,18 +93,19 @@ API_SECRET_KEY=xxx VERSION_CANDIDATA=2.0.0 python deploy/deploy.py   # exit 0 = 
                      /\          E2E / sistema: 2
                     /  \         Smoke test en staging + escenario de carga con Locust
                    /----\
-                  /      \       Integración / API: 14
-                 /        \      Contrato JSON Schema, BVA de punta a punta y S3/SQS, en Docker
+                  /      \       Integración: 44
+                 /        \      15 de API en Docker (contrato, BVA, PUT, S3/SQS) + 29 de interfaz con API simulada
                 /----------\
-               /            \    Unitarias: 91
-              /              \   81 de pytest (dominio, servicio, infraestructura con dobles) + 10 de Vitest
+               /            \    Unitarias: 131
+              /              \   93 de pytest (dominio, servicio, infraestructura) + 38 de Vitest (lógica del formulario)
              /________________\
 ```
 
 | Nivel | Cantidad | Herramienta | Qué necesita para correr | Tiempo real en CI |
 |---|---|---|---|---|
-| Unitarias | 81 + 10 | pytest, Vitest | Nada: todo en memoria, AWS simulado con `moto` | ~4 s |
-| Integración / API | 14 | pytest + requests + jsonschema | Docker Compose: API, LocalStack e IaC | ~1 min |
+| Unitarias | 93 + 38 | pytest, Vitest | Nada: todo en memoria, AWS simulado con `moto` | ~5 s |
+| Integración: interfaz | 29 | Vitest + Testing Library | Navegador simulado (jsdom) y `fetch` falso | ~5 s |
+| Integración: API | 15 | pytest + requests + jsonschema | Docker Compose: API, LocalStack e IaC | ~1 min |
 | E2E / sistema | 2 escenarios | Locust, `deploy.py` | Entorno completo levantado | ~1 a 2 min |
 
 La forma de pirámide es intencional. Abajo hay muchas pruebas rápidas y baratas que localizan el bug con precisión;
@@ -168,6 +169,19 @@ Para usar el análisis desde CI, abre el proyecto en SonarCloud y desactiva **Au
 | Secreto en el código | Escribir un token en cualquier `.py` | Gate 2: SonarCloud |
 | Cuello de botella | `CENTRAL_RIESGO_LATENCIA_MS=1200` (o `latencia_ms` en el workflow) | Gate de carga: el p95 viola el SLO |
 | Staging enfermo | `APP_HEALTHY=false` (o `app_healthy` en el workflow) | CD: el smoke test falla, hay rollback y alerta en el log |
+
+## Clientes recurrentes y actualización de solicitudes
+
+El **correo** identifica al cliente, sin importar mayúsculas ni espacios (`clave_cliente` en `modelos.py`).
+
+| Endpoint | Qué hace |
+|---|---|
+| `POST /api/v1/solicitudes` | Crea una solicitud nueva. `numero_cliente` dice cuál es para ese correo (1 = nuevo, 2+ = recurrente). |
+| `PUT /api/v1/solicitudes/{id}` | Reevalúa la misma solicitud con datos nuevos: conserva el id, sube `version` y fija `actualizado_en`. Responde **409** si el correo es de otro cliente y **404** si no existe. |
+
+En la interfaz, si el correo ya tiene solicitudes, antes de enviar aparece un diálogo con tres opciones:
+**Actualizar la solicitud #N**, **Crear una nueva solicitud** o **Cancelar**. El historial marca cada fila como
+*Cliente nuevo* o *Recurrente · 2.ª solicitud*, y agrega *Actualizada · v2* cuando corresponde.
 
 ## Anti-patrones de pruebas y su solución
 

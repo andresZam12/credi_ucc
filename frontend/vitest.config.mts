@@ -9,7 +9,8 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov"],
-      include: ["frontend/src/app/page.tsx"],
+      include: ["frontend/src/app/page.tsx", "frontend/src/lib/**/*.ts"],
+      exclude: ["frontend/src/**/*.test.{ts,tsx}"],
       reportsDirectory: "frontend/coverage",
     },
   },
