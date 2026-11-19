@@ -8,3 +8,10 @@ coverage.xml
 .pytest_cache/
 .ruff_cache/
 .DS_Store
+
+# Artefactos generados por el pipeline (se publican como artifacts en GitHub Actions)
+reporte_carga*.csv
+releases.json
+
+# El proyecto npm vive en frontend/; un package-lock.json en la raíz es accidental
+/package-lock.json

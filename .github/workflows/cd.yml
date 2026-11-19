@@ -1,0 +1,156 @@
+# Semanas 5, 8, 9 y 10: pipeline de Entrega/Despliegue Continuo.
+#
+# Solo corre si el CI (workflow "SonarQube": Ruff + pytest con cobertura + frontend + Sonar)
+# terminó en verde. Cada job es un Quality Gate y depende del anterior (needs):
+#
+#   CI verde ─► Gate 3: contrato de API ─► Gate de carga (SLO) ─► Despliegue (smoke test + rollback)
+#
+# Ejecución manual (Actions → CD → Run workflow) para demostrar fallas en vivo:
+#   app_healthy=false  → el smoke test falla y hay ROLLBACK automático
+#   latencia_ms=1200   → el p95 viola el SLO y el despliegue ni siquiera empieza
+name: CD
+
+on:
+  workflow_run:
+    workflows: [SonarQube]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      app_healthy:
+        description: "¿Staging sano? (false = simular staging enfermo → rollback)"
+        type: choice
+        options: ["true", "false"]
+        default: "true"
+      latencia_ms:
+        description: "Latencia simulada de la central de riesgo en ms (1200 = cuello de botella)"
+        type: string
+        default: "150"
+
+permissions:
+  contents: read
+
+# Nunca dos despliegues al mismo tiempo; el que llega espera su turno.
+concurrency:
+  group: cd-produccion
+  cancel-in-progress: false
+
+env:
+  # En workflow_run se prueba exactamente el commit que pasó el CI.
+  REF: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+jobs:
+  pruebas-api:
+    name: "Gate 3: contrato de API (caja negra)"
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ env.REF }}
+
+      - name: Levantar LocalStack + IaC + API
+        run: docker compose up -d --build --wait --wait-timeout 180 api
+
+      - name: Ejecutar pruebas de contrato en el contenedor test-runner
+        run: docker compose --profile qa run --rm --build test-runner
+
+      - name: Logs de la API (solo si algo falló)
+        if: failure()
+        run: docker compose logs api infra-init
+
+      - name: Destruir el entorno
+        if: always()
+        run: docker compose down -v
+
+  carga:
+    name: "Gate de carga: SLO p95 ≤ 1000 ms y fallos ≤ 1 %"
+    needs: pruebas-api
+    runs-on: ubuntu-latest
+    env:
+      CENTRAL_RIESGO_LATENCIA_MS: ${{ inputs.latencia_ms || '150' }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ env.REF }}
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Instalar dependencias (Locust)
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Levantar la API
+        run: docker compose up -d --build --wait --wait-timeout 180 api
+
+      - name: Enjambre de 50 usuarios durante 30 s
+        run: >
+          python -m locust -f load/locustfile.py --headless -u 50 -r 10 -t 30s
+          --host http://localhost:8000 --csv reporte_carga --exit-code-on-error 0 --only-summary
+
+      - name: Verificar el SLO (Quality Gate de rendimiento)
+        run: python load/verificar_slo.py reporte_carga_stats.csv 1000 1
+
+      - name: Publicar el reporte de carga
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: reporte-carga
+          path: reporte_carga_*.csv
+          if-no-files-found: ignore
+
+      - name: Destruir el entorno
+        if: always()
+        run: docker compose down -v
+
+  despliegue:
+    name: "Despliegue: smoke test, promoción o rollback"
+    needs: carga
+    runs-on: ubuntu-latest
+    # Si el environment "produccion" tiene Required reviewers en GitHub, este job espera
+    # aprobación humana: Continuous Deployment pasa a ser Continuous Delivery.
+    environment: produccion
+    env:
+      APP_VERSION: 1.0.${{ github.run_number }}
+      VERSION_CANDIDATA: 1.0.${{ github.run_number }}
+      APP_HEALTHY: ${{ inputs.app_healthy || 'true' }}
+      STAGING_URL: http://localhost:8000
+      API_SECRET_KEY: ${{ secrets.API_SECRET_KEY }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ env.REF }}
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Instalar dependencias
+        run: python -m pip install -r requirements-dev.txt
+
+      # Si staging no queda healthy NO se corta aquí: decidir es trabajo del smoke test,
+      # que es quien ejecuta el rollback y deja la alerta en el log.
+      - name: Levantar staging con la versión candidata
+        run: >
+          docker compose up -d --build --wait --wait-timeout 120 api
+          || echo "::warning::Staging no quedó healthy; el smoke test decidirá."
+
+      - name: Smoke test y promoción (exit 1 = rollback)
+        run: python deploy/deploy.py
+
+      - name: Publicar el registro de releases
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: releases
+          path: releases.json
+          if-no-files-found: ignore
+
+      - name: Destruir staging
+        if: always()
+        run: docker compose down -v
