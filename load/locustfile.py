@@ -28,8 +28,8 @@ class EstudianteSolicitante(HttpUser):
                                   "nombre": "Carga", "email": "carga@example.com",
                                   "edad": random.randint(18, 40),
                                   "score": random.randint(550, 850),
-                                  "ingresos": round(random.uniform(1500, 4000), 2),
-                                  "monto": round(random.uniform(100, 5000), 2),
+                                  "ingresos": random.randint(1_000_000, 4_000_000),  # COP
+                                  "monto": random.randint(500_000, 20_000_000),
                                   "es_estudiante": random.choice([True, False]),
                               }) as respuesta:
             if respuesta.status_code != 201:

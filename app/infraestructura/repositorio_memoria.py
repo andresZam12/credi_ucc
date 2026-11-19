@@ -2,7 +2,7 @@
 from itertools import count
 from threading import Lock
 
-from app.dominio.modelos import ResultadoEvaluacion, SolicitudCredito, SolicitudRegistrada
+from app.dominio.modelos import ResultadoEvaluacion, SolicitudCredito, SolicitudRegistrada, clave_cliente
 
 
 class RepositorioEnMemoria:
@@ -14,7 +14,12 @@ class RepositorioEnMemoria:
     def agregar(self, solicitud: SolicitudCredito,
                 resultado: ResultadoEvaluacion) -> SolicitudRegistrada:
         with self._candado:
-            registro = SolicitudRegistrada(next(self._secuencia), solicitud, resultado)
+            # Se cuenta dentro del candado: dos peticiones simultáneas del mismo correo
+            # no pueden recibir el mismo número de solicitud.
+            clave = clave_cliente(solicitud.email)
+            previas = sum(1 for r in self._registros.values() if clave_cliente(r.solicitud.email) == clave)
+            registro = SolicitudRegistrada(next(self._secuencia), solicitud, resultado,
+                                           numero_cliente=previas + 1)
             self._registros[registro.id] = registro
         return registro
 

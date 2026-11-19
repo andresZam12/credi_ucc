@@ -7,7 +7,7 @@ from app.config import Configuracion
 from app.contenedor import construir_servicio
 
 SOLICITUD = {"nombre": "Laura Rojas", "email": "laura@example.com", "edad": 22, "score": 760,
-             "ingresos": 2100.0, "monto": 1200.0, "es_estudiante": True}
+             "ingresos": 2_100_000.0, "monto": 1_200_000.0, "es_estudiante": True}
 
 
 class MonitorFijo:
@@ -44,6 +44,38 @@ def test_radicar_consultar_y_listar(cliente):
                                              ({"edad": "veinte"}, 422)])
 def test_peticiones_invalidas(cliente, cambios, codigo):
     assert cliente.post("/api/v1/solicitudes", json={**SOLICITUD, **cambios}).status_code == codigo
+
+
+def test_segunda_solicitud_del_mismo_correo_es_recurrente(cliente):
+    primera = cliente.post("/api/v1/solicitudes", json=SOLICITUD).json()
+    segunda = cliente.post("/api/v1/solicitudes", json={**SOLICITUD, "email": "LAURA@example.com"}).json()
+    assert (primera["numero_cliente"], primera["es_recurrente"]) == (1, False)
+    assert (segunda["numero_cliente"], segunda["es_recurrente"]) == (2, True)
+
+
+def test_put_actualiza_la_misma_solicitud(cliente):
+    creada = cliente.post("/api/v1/solicitudes", json=SOLICITUD).json()
+
+    respuesta = cliente.put(f"/api/v1/solicitudes/{creada['id']}", json={**SOLICITUD, "monto": 3_000_000.0})
+
+    assert respuesta.status_code == 200
+    cuerpo = respuesta.json()
+    assert (cuerpo["id"], cuerpo["version"], cuerpo["monto"]) == (creada["id"], 2, 3_000_000.0)
+    assert creada["actualizado_en"] is None
+    assert cuerpo["actualizado_en"] is not None
+    assert len(cliente.get("/api/v1/solicitudes").json()) == 1
+
+
+@pytest.mark.parametrize("cambios, codigo", [({"email": "otra@example.com"}, 409), ({"score": 900}, 400),
+                                             ({"edad": "veinte"}, 422)])
+def test_put_invalido(cliente, cambios, codigo):
+    creada = cliente.post("/api/v1/solicitudes", json=SOLICITUD).json()
+    respuesta = cliente.put(f"/api/v1/solicitudes/{creada['id']}", json={**SOLICITUD, **cambios})
+    assert respuesta.status_code == codigo
+
+
+def test_put_inexistente_404(cliente):
+    assert cliente.put("/api/v1/solicitudes/999", json=SOLICITUD).status_code == 404
 
 
 def test_inexistente_404(cliente):

@@ -24,7 +24,7 @@ def _cliente(servicio):
 def test_aprobacion_publica_expediente_y_evento():
     r = requests.post(f"{BASE_URL}/api/v1/solicitudes", timeout=10, json={
         "nombre": "Integracion", "email": "integracion@example.com", "edad": 30,
-        "score": 700, "ingresos": 3000.0, "monto": 2000.0, "es_estudiante": False})
+        "score": 700, "ingresos": 3_000_000.0, "monto": 2_000_000.0, "es_estudiante": False})
     solicitud = r.json()
     assert solicitud["decision"] == "APROBADO"
     assert solicitud["notificado"] is True

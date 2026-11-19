@@ -21,7 +21,7 @@ import requests
 
 VERSION_INICIAL = "1.0.0"
 SOLICITUD_DE_HUMO = {"nombre": "Smoke", "email": "smoke@example.com", "edad": 25,
-                     "score": 700, "ingresos": 2500.0, "monto": 500.0, "es_estudiante": True}
+                     "score": 700, "ingresos": 2_500_000.0, "monto": 1_000_000.0, "es_estudiante": True}
 
 
 def enmascarar(secreto: str) -> str:

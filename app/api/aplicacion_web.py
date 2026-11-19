@@ -6,7 +6,11 @@ from fastapi.responses import JSONResponse
 
 from app.api.esquemas import SolicitudEntrada
 from app.aplicacion.puertos import MonitorSalud
-from app.aplicacion.servicio_solicitudes import ServicioSolicitudes, SolicitudNoEncontradaError
+from app.aplicacion.servicio_solicitudes import (
+    CorreoNoCoincideError,
+    ServicioSolicitudes,
+    SolicitudNoEncontradaError,
+)
 from app.dominio.errores import DominioError
 
 NOMBRE_SERVICIO = "crediucc-api"
@@ -35,6 +39,13 @@ def radicar_solicitud(entrada: SolicitudEntrada,
     return servicio.radicar(entrada.a_dominio()).a_dict()
 
 
+@rutas.put("/api/v1/solicitudes/{solicitud_id}")
+def actualizar_solicitud(solicitud_id: int, entrada: SolicitudEntrada,
+                         servicio: Servicio) -> dict:
+    """Reevalúa una solicitud existente del mismo cliente: conserva el número y sube la versión."""
+    return servicio.actualizar(solicitud_id, entrada.a_dominio()).a_dict()
+
+
 @rutas.get("/api/v1/solicitudes")
 def listar_solicitudes(servicio: Servicio) -> list[dict]:
     return [registro.a_dict() for registro in servicio.listar()]
@@ -54,6 +65,10 @@ def _no_encontrada(_: Request, exc: SolicitudNoEncontradaError) -> JSONResponse:
     return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"detail": str(exc)})
 
 
+def _correo_no_coincide(_: Request, exc: CorreoNoCoincideError) -> JSONResponse:
+    return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": str(exc)})
+
+
 def crear_app(servicio: ServicioSolicitudes, monitor_salud: MonitorSalud,
               version: str = "1.0.0") -> FastAPI:
     """Fábrica: las dependencias llegan desde fuera (fácil de probar con dobles)."""
@@ -63,4 +78,5 @@ def crear_app(servicio: ServicioSolicitudes, monitor_salud: MonitorSalud,
     app.include_router(rutas)
     app.add_exception_handler(DominioError, _error_dominio)
     app.add_exception_handler(SolicitudNoEncontradaError, _no_encontrada)
+    app.add_exception_handler(CorreoNoCoincideError, _correo_no_coincide)
     return app

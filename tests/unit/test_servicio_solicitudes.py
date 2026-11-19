@@ -1,7 +1,12 @@
 """Aplicación: el caso de uso se prueba con dobles gracias a la inversión de dependencias."""
 import pytest
 
-from app.aplicacion.servicio_solicitudes import ServicioSolicitudes, SolicitudNoEncontradaError
+from app.aplicacion.servicio_solicitudes import (
+    CorreoNoCoincideError,
+    ServicioSolicitudes,
+    SolicitudNoEncontradaError,
+)
+from app.dominio.errores import ValorFueraDeDominioError
 from app.dominio.evaluador import EvaluadorCredito
 from app.infraestructura.repositorio_memoria import RepositorioEnMemoria
 from tests.unit.conftest import nueva_solicitud
@@ -69,3 +74,69 @@ def test_obtener_inexistente_lanza_error():
     servicio, _, _ = crear_servicio()
     with pytest.raises(SolicitudNoEncontradaError):
         servicio.obtener(42)
+
+
+# ------------------------------------------------- clientes recurrentes y actualización
+def test_numera_las_solicitudes_por_cliente_sin_importar_mayusculas_ni_espacios():
+    servicio, _, _ = crear_servicio()
+
+    primera = servicio.radicar(nueva_solicitud(email="ana@ucc.edu.co"))
+    otra_persona = servicio.radicar(nueva_solicitud(email="juan@ucc.edu.co"))
+    segunda = servicio.radicar(nueva_solicitud(email="  ANA@ucc.edu.co "))
+
+    assert (primera.numero_cliente, primera.es_recurrente) == (1, False)
+    assert (otra_persona.numero_cliente, otra_persona.es_recurrente) == (1, False)
+    assert (segunda.numero_cliente, segunda.es_recurrente) == (2, True)
+
+
+def test_actualizar_reevalua_conserva_el_numero_y_sube_la_version():
+    servicio, publicador, central = crear_servicio()
+    original = servicio.radicar(nueva_solicitud(score=599))  # rechazada por score
+
+    actualizada = servicio.actualizar(original.id, nueva_solicitud(score=700, monto=3_000_000.0))
+
+    assert actualizada.id == original.id
+    assert (actualizada.version, actualizada.numero_cliente) == (2, 1)
+    assert actualizada.resultado.es_aprobado
+    assert actualizada.notificado is True
+    assert publicador.publicados == [original.id]
+    assert central.consultas == 2
+    assert actualizada.creado_en == original.creado_en
+    assert actualizada.actualizado_en is not None
+    assert servicio.obtener(original.id) == actualizada
+    assert len(servicio.listar()) == 1  # se modificó, no se duplicó
+
+
+def test_actualizar_de_aprobada_a_rechazada_quita_la_notificacion():
+    servicio, publicador, _ = crear_servicio()
+    original = servicio.radicar(nueva_solicitud())
+
+    actualizada = servicio.actualizar(original.id, nueva_solicitud(ingresos=1_000_000.0))
+
+    assert actualizada.resultado.es_aprobado is False
+    assert actualizada.notificado is False
+    assert publicador.publicados == [original.id]  # solo la aprobación original
+
+
+def test_actualizar_con_otro_correo_se_rechaza_y_no_modifica():
+    servicio, _, _ = crear_servicio()
+    original = servicio.radicar(nueva_solicitud(email="ana@ucc.edu.co"))
+
+    with pytest.raises(CorreoNoCoincideError):
+        servicio.actualizar(original.id, nueva_solicitud(email="otra@ucc.edu.co"))
+    assert servicio.obtener(original.id).version == 1
+
+
+def test_actualizar_con_datos_destructivos_no_modifica():
+    servicio, _, _ = crear_servicio()
+    original = servicio.radicar(nueva_solicitud())
+
+    with pytest.raises(ValorFueraDeDominioError):
+        servicio.actualizar(original.id, nueva_solicitud(score=900))
+    assert servicio.obtener(original.id) == original
+
+
+def test_actualizar_inexistente_lanza_error():
+    servicio, _, _ = crear_servicio()
+    with pytest.raises(SolicitudNoEncontradaError):
+        servicio.actualizar(42, nueva_solicitud())

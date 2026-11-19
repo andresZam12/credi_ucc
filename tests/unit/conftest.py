@@ -6,7 +6,7 @@ import pytest
 from app.dominio.modelos import SolicitudCredito
 
 SOLICITUD_BASE = SolicitudCredito(nombre="Laura Rojas", email="laura@example.com", edad=30,
-                                  score=700, ingresos=2500.0, monto=1000.0, es_estudiante=False)
+                                  score=700, ingresos=2_500_000.0, monto=2_000_000.0, es_estudiante=False)
 
 
 def nueva_solicitud(**cambios) -> SolicitudCredito:

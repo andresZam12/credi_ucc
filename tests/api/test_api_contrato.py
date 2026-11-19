@@ -23,13 +23,18 @@ SOLICITUD_SCHEMA = {
         "tasa_mensual": {"type": ["number", "null"]},
         "notificado": {"type": "boolean"},
         "creado_en": {"type": "string"},
+        "numero_cliente": {"type": "integer", "minimum": 1},
+        "es_recurrente": {"type": "boolean"},
+        "version": {"type": "integer", "minimum": 1},
+        "actualizado_en": {"type": ["string", "null"]},
     },
     "required": ["id", "nombre", "email", "monto", "decision", "motivo",
-                 "tasa_mensual", "notificado", "creado_en"],
+                 "tasa_mensual", "notificado", "creado_en", "numero_cliente", "es_recurrente",
+                 "version", "actualizado_en"],
 }
 
 BASE = {"nombre": "Ana Gomez", "email": "ana@example.com", "edad": 21,
-        "score": 780, "ingresos": 2600.0, "monto": 900.0, "es_estudiante": True}
+        "score": 780, "ingresos": 2_600_000.0, "monto": 900_000.0, "es_estudiante": True}
 
 
 def crear(**cambios):
@@ -57,8 +62,8 @@ def test_crear_solicitud_201_cumple_contrato():
         ({"edad": 18}, "APROBADO"),
         ({"score": 599}, "RECHAZADO"),
         ({"score": 600}, "APROBADO"),
-        ({"ingresos": 1999.99}, "RECHAZADO"),
-        ({"ingresos": 2000.00}, "APROBADO"),
+        ({"ingresos": 1_499_999.0}, "RECHAZADO"),
+        ({"ingresos": 1_500_000.0}, "APROBADO"),
     ],
 )
 def test_bva_extremo_a_extremo(cambios, decision):
@@ -80,3 +85,20 @@ def test_listado_cumple_contrato():
 
 def test_solicitud_inexistente_404():
     assert requests.get(f"{BASE_URL}/api/v1/solicitudes/999999", timeout=5).status_code == 404
+
+
+def test_cliente_recurrente_y_actualizacion_por_put():
+    correo = f"recurrente-{os.getpid()}@example.com"  # correo único para no chocar con otras pruebas
+    primera = crear(email=correo).json()
+    segunda = crear(email=correo.upper()).json()
+    assert (primera["numero_cliente"], segunda["numero_cliente"], segunda["es_recurrente"]) == (1, 2, True)
+
+    r = requests.put(f"{BASE_URL}/api/v1/solicitudes/{primera['id']}",
+                     json={**BASE, "email": correo, "score": 599}, timeout=10)
+    assert r.status_code == 200
+    validate(instance=r.json(), schema=SOLICITUD_SCHEMA)
+    assert (r.json()["id"], r.json()["version"], r.json()["decision"]) == (primera["id"], 2, "RECHAZADO")
+
+    otro = requests.put(f"{BASE_URL}/api/v1/solicitudes/{primera['id']}",
+                        json={**BASE, "email": "intruso@example.com"}, timeout=10)
+    assert otro.status_code == 409

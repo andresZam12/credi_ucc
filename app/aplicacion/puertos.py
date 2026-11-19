@@ -10,7 +10,9 @@ from app.dominio.modelos import ResultadoEvaluacion, SolicitudCredito, Solicitud
 
 class RepositorioSolicitudes(Protocol):
     def agregar(self, solicitud: SolicitudCredito,
-                resultado: ResultadoEvaluacion) -> SolicitudRegistrada: ...
+                resultado: ResultadoEvaluacion) -> SolicitudRegistrada:
+        """Asigna el id y el número de solicitud del cliente (1.ª, 2.ª...) según el correo."""
+        ...
 
     def actualizar(self, registro: SolicitudRegistrada) -> None: ...
 
