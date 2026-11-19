@@ -28,7 +28,7 @@ app/
 deploy/deploy.py        PipelineDespliegue, ClienteStaging, RegistroReleases, Notificador (Consola)
 infra/init_infra.py     AprovisionadorIaC + EstadoDeseado (idempotente)
 load/                   locustfile.py (enjambre) + verificar_slo.py (Quality Gate de rendimiento)
-tests/unit/             75 pruebas, ~95 % de cobertura de líneas y ramas (Quality Gate ≥ 80 %)
+tests/unit/             81 pruebas (incluye test_antipatrones.py), ~95 % de cobertura de líneas y ramas (Quality Gate ≥ 80 %)
 tests/api/              14 pruebas de caja negra en el contenedor test-runner (JSON Schema + S3/SQS)
 frontend/src/app/       10 pruebas de interfaz (Vitest + Testing Library) con cobertura LCOV
 .github/workflows/      sonarcloud.yml (CI) → cd.yml (contrato → carga → despliegue)
@@ -127,6 +127,20 @@ Para usar el análisis desde CI, abre el proyecto en SonarCloud y desactiva **Au
 | Secreto en el código | Escribir un token en cualquier `.py` | Gate 2: SonarCloud |
 | Cuello de botella | `CENTRAL_RIESGO_LATENCIA_MS=1200` (o `latencia_ms` en el workflow) | Gate de carga: el p95 viola el SLO |
 | Staging enfermo | `APP_HEALTHY=false` (o `app_healthy` en el workflow) | CD: el smoke test falla, hay rollback y alerta en el log |
+
+## Anti-patrones de pruebas y su solución
+
+En [tests/unit/test_antipatrones.py](tests/unit/test_antipatrones.py) hay tres anti-patrones. Para cada uno se
+inyecta un **mutante** (una copia del código con un bug) y se demuestra que la prueba mal escrita sigue en verde,
+mientras que la versión corregida detecta el bug.
+
+| Anti-patrón | Por qué es malo | Bug que deja pasar | Solución |
+|---|---|---|---|
+| Prueba sin aserción | Solo comprueba que el código "no explota" | Off-by-one en el score (`>` en vez de `>=`) | Assert sobre el resultado esperado (patrón AAA) |
+| `try/except Exception: pass` | Si la excepción esperada no ocurre, la prueba igual pasa | Un validador que ya no valida nada | `pytest.raises(TipoInvalidoError)`, que exige el tipo exacto |
+| Estado compartido entre pruebas | La misma prueba pasa o falla según el orden de ejecución | Prueba frágil (*flaky*) | Fixture que entrega un repositorio nuevo a cada prueba |
+
+Ruff detecta el segundo anti-patrón por sí solo (regla `SIM105`). En el ejemplo se silencia a propósito con `noqa`.
 
 ## Bug real encontrado durante las pruebas (anatomía del bug)
 
