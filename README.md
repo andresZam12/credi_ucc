@@ -111,7 +111,7 @@ Para demostrar los gates en vivo, ejecuta **Actions → CD → Run workflow** y 
 
 El workflow `.github/workflows/sonarcloud.yml` ejecuta Ruff, las pruebas Python con cobertura, y lint, type-check y build del frontend en `windows-latest`. Después envía el análisis a SonarCloud en cada push o pull request a `main`, usando la autenticación OIDC de SonarSource. También se puede iniciar manualmente desde **Actions → SonarQube → Run workflow**.
 
-Para usar el análisis desde CI, abre el proyecto en SonarCloud y desactiva **Automatic Analysis** en **Administration → Analysis Method**. SonarCloud no permite combinar el análisis automático con el escaneo de GitHub Actions. Las claves del proyecto están configuradas en `sonar-project.properties` como `estebanmns` y `estebanMns_crediucc`.
+Para usar el análisis desde CI, abre el proyecto en SonarCloud y desactiva **Automatic Analysis** en **Administration → Analysis Method**. SonarCloud no permite combinar el análisis automático con el escaneo de GitHub Actions. Las claves del proyecto están configuradas en `sonar-project.properties` como `andreszam12` y `andresZam12_credi_ucc`.
 
 ## Secretos de GitHub requeridos
 

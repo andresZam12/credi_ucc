@@ -73,5 +73,5 @@ jobs:
         uses: SonarSource/sonarqube-scan-action@4d1dc0c91ee400dcf8a6dddf2f705ac36542e304 # v8.4.0
         with:
           args: >
-            -Dsonar.organization=estebanmns
-            -Dsonar.projectKey=estebanMns_crediucc
+            -Dsonar.organization=andreszam12
+            -Dsonar.projectKey=andresZam12_credi_ucc
