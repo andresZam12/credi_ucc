@@ -47,6 +47,7 @@ frontend/src/app/       10 pruebas de interfaz (Vitest + Testing Library) con co
 ```bash
 python -m venv venv && source venv/bin/activate      # Windows: .\venv\Scripts\activate
 python -m pip install -r requirements-dev.txt
+pre-commit install                                   # shift-left: Ruff + pytest antes de cada commit
 python -m pytest                                     # unitarias + Quality Gate de cobertura (≥ 80 %)
 python -m ruff check .                               # linter
 python -m uvicorn app.main:app --port 8000 --reload  # terminal 1: API
@@ -85,6 +86,46 @@ python load/verificar_slo.py reporte_carga_stats.csv 1000 1      # p95 ≤ 1000 
 ```bash
 API_SECRET_KEY=xxx VERSION_CANDIDATA=2.0.0 python deploy/deploy.py   # exit 0 = promovido, 1 = rollback
 ```
+
+## Pirámide de pruebas
+
+```
+                     /\          E2E / sistema: 2
+                    /  \         Smoke test en staging + escenario de carga con Locust
+                   /----\
+                  /      \       Integración / API: 14
+                 /        \      Contrato JSON Schema, BVA de punta a punta y S3/SQS, en Docker
+                /----------\
+               /            \    Unitarias: 91
+              /              \   81 de pytest (dominio, servicio, infraestructura con dobles) + 10 de Vitest
+             /________________\
+```
+
+| Nivel | Cantidad | Herramienta | Qué necesita para correr | Tiempo real en CI |
+|---|---|---|---|---|
+| Unitarias | 81 + 10 | pytest, Vitest | Nada: todo en memoria, AWS simulado con `moto` | ~4 s |
+| Integración / API | 14 | pytest + requests + jsonschema | Docker Compose: API, LocalStack e IaC | ~1 min |
+| E2E / sistema | 2 escenarios | Locust, `deploy.py` | Entorno completo levantado | ~1 a 2 min |
+
+La forma de pirámide es intencional. Abajo hay muchas pruebas rápidas y baratas que localizan el bug con precisión;
+arriba hay pocas, lentas y caras, que confirman que todo funciona junto. Por eso el pipeline corre los niveles de
+abajo hacia arriba: si una prueba unitaria falla, no tiene sentido gastar minutos levantando Docker.
+
+## Shift-left: el bug se detecta lo antes posible
+
+```
+ Máquina del desarrollador     Pull Request               main
+ ─────────────────────────     ───────────────────────    ─────────────────────────────────
+ pre-commit (Ruff + pytest) →  CI obligatorio para     →  CD automático: contrato → carga
+ bloquea el commit             hacer merge (branch        → despliegue con smoke test
+                               protection)                  o rollback
+ segundos                      ~5 min                     ~5 min
+```
+
+- **`pre-commit`** ([.pre-commit-config.yaml](.pre-commit-config.yaml)): ejecuta Ruff y pytest antes de cada
+  commit. Si se cambia `>=` por `>` en `ReglaScoreMinimo`, el commit se rechaza en ~4 s y el bug nunca sale de la máquina.
+- **Branch protection en `main`:** el check *Build and analyze*, que incluye el Quality Gate de SonarCloud, es
+  obligatorio y la rama debe estar al día con `main`. Tampoco se permiten force push ni borrar la rama.
 
 ## Pipeline completo en GitHub Actions
 

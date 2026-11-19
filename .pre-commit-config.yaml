@@ -1,0 +1,25 @@
+# Shift-left testing: los mismos Quality Gates del CI corren en la máquina del desarrollador
+# ANTES de cada commit. Un error detectado aquí cuesta segundos; en CI, minutos; en producción, mucho más.
+#
+# Instalación (una sola vez, con el entorno virtual activo):
+#   python -m pip install -r requirements-dev.txt
+#   pre-commit install
+# Ejecutar todos los hooks a mano:   pre-commit run --all-files
+#
+# Los hooks son locales (language: system): usan las mismas versiones de requirements-dev.txt
+# que el CI, así que no hay diferencias entre "en mi máquina pasa" y "en CI falla".
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: "Gate 0a: linter (Ruff)"
+        entry: python -m ruff check
+        language: system
+        types: [python]
+
+      - id: pytest
+        name: "Gate 0b: pruebas unitarias + cobertura >= 80 %"
+        entry: python -m pytest -q -p no:cacheprovider
+        language: system
+        pass_filenames: false
+        types: [python]
